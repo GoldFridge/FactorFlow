@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: factorflow-postgres
+    environment:
+      POSTGRES_USER: factorflow
+      POSTGRES_PASSWORD: factorflow
+      POSTGRES_DB: factorflow
+    ports:
+      - "5432:5432"
+    volumes:
+      - factorflow-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U factorflow -d factorflow"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  factorflow-pgdata:

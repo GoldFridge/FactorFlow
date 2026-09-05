@@ -1,0 +1,28 @@
+# Build artifacts
+/bin/
+/dist/
+*.exe
+*.test
+*.out
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Local data
+/tmp/
+/testdata/local/
+coverage.txt
+
+# Editors
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Frontend
+/web/node_modules/
+/web/dist/
