@@ -345,3 +345,44 @@ func FuzzAddSubInverse(f *testing.F) {
 		require.Truef(t, sum.Equal(commuted), "%s + %s != %s + %s", a, b, b, a)
 	})
 }
+
+func TestDivFloorNeverRoundsUp(t *testing.T) {
+	t.Parallel()
+
+	// Converting cash back into notional at a unit price below 1 must round down, or the
+	// allocations of one lot could sum to more than the lot's supply.
+	cash := money.MustParse("2438.83", money.USD)
+	unitPrice := money.MustParseRate("0.975532")
+
+	floored, err := cash.DivFloor(unitPrice)
+	require.NoError(t, err)
+	assert.Equal(t, "2500.00", floored.String())
+
+	rounded, err := money.MustParse("100.00", money.USD).Div(money.MustParseRate("3"))
+	require.NoError(t, err)
+	assert.Equal(t, "33.33", rounded.String())
+
+	floored, err = money.MustParse("100.00", money.USD).DivFloor(money.MustParseRate("3"))
+	require.NoError(t, err)
+	assert.Equal(t, "33.33", floored.String())
+
+	// 100 / 0.7 is 142.857...; Div rounds to 142.86, DivFloor must stay below.
+	rounded, err = money.MustParse("100.00", money.USD).Div(money.MustParseRate("0.7"))
+	require.NoError(t, err)
+	assert.Equal(t, "142.86", rounded.String())
+
+	floored, err = money.MustParse("100.00", money.USD).DivFloor(money.MustParseRate("0.7"))
+	require.NoError(t, err)
+	assert.Equal(t, "142.85", floored.String())
+
+	// Negative values floor away from zero, as the name says.
+	floored, err = money.MustParse("-100.00", money.USD).DivFloor(money.MustParseRate("0.7"))
+	require.NoError(t, err)
+	assert.Equal(t, "-142.86", floored.String())
+
+	_, err = cash.DivFloor(money.ZeroRate())
+	require.ErrorIs(t, err, money.ErrDivideByZero)
+
+	_, err = money.Amount{}.DivFloor(unitPrice)
+	require.ErrorIs(t, err, money.ErrInvalidCurrency)
+}

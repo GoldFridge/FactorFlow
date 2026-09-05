@@ -195,6 +195,21 @@ func (a Amount) Div(r Rate) (Amount, error) {
 	return FromDecimalRounded(q, a.currency)
 }
 
+// DivFloor divides the amount by a rate, rounding towards negative infinity.
+//
+// The solver needs this rather than Div: converting a cash allocation back into notional
+// must never round up, or the allocations of one lot could sum to more than its supply.
+func (a Amount) DivFloor(r Rate) (Amount, error) {
+	if !a.currency.IsValid() {
+		return Amount{}, fmt.Errorf("%w: %q", ErrInvalidCurrency, string(a.currency))
+	}
+	if r.IsZero() {
+		return Amount{}, ErrDivideByZero
+	}
+	q := a.Decimal().DivRound(r.Decimal(), a.currency.Exponent()+divisionScale)
+	return fromShifted(q.Shift(a.currency.Exponent()).Floor(), a.currency)
+}
+
 // RateAgainst returns a / o as a Rate, for ratios such as an allocation's share of supply.
 func (a Amount) RateAgainst(o Amount) (Rate, error) {
 	if err := a.assertSameCurrency(o); err != nil {
