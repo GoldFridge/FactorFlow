@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/skimer2king/factorflow/internal/platform/httpserver"
@@ -149,10 +150,18 @@ func isWrite(method string) bool {
 	}
 }
 
-// routeOf returns the matched route pattern, so two different invoices posting to the same
-// endpoint share a namespace while different endpoints never collide.
+// routeOf names the endpoint an idempotency key is scoped to.
+//
+// Middleware runs before the final route is matched, so the pattern chi can report at this
+// point is often still a wildcard such as "/api/v1/*". Scoping every write under one
+// wildcard would put unrelated endpoints in the same namespace, so the request path is used
+// whenever the pattern has not resolved to a concrete route yet.
 func routeOf(r *http.Request) string {
-	return httpserver.RoutePattern(r)
+	pattern := httpserver.RoutePattern(r)
+	if pattern == "" || strings.Contains(pattern, "*") {
+		return r.URL.Path
+	}
+	return pattern
 }
 
 // responseCapture records the handler's response so it can be stored for replay.

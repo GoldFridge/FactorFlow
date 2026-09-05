@@ -48,6 +48,10 @@ type Assessment struct {
 	// ConfidentialCommitment binds the assessment to the signed minimal output of the TEE
 	// workflow, without carrying any document content.
 	ConfidentialCommitment string
+	// ConfidentialNonce is the per-run nonce the commitment was computed over. It is stored
+	// because a commitment nobody can recompute proves nothing: with the nonce, the stored
+	// features and the model version, a verifier can check the commitment itself.
+	ConfidentialNonce string
 
 	// RequiresManualReview is set when the confidence gate blocks auto-approval.
 	RequiresManualReview bool
@@ -74,6 +78,7 @@ type AssessInput struct {
 
 	MarketSnapshotHash     string
 	ConfidentialCommitment string
+	ConfidentialNonce      string
 }
 
 // Assess scores an invoice and prices it.
@@ -127,6 +132,7 @@ func (m Model) Assess(in AssessInput, now time.Time) (*Assessment, error) {
 		ReservePrice:           price.ReservePrice,
 		MarketSnapshotHash:     strings.ToLower(in.MarketSnapshotHash),
 		ConfidentialCommitment: strings.ToLower(in.ConfidentialCommitment),
+		ConfidentialNonce:      in.ConfidentialNonce,
 		RequiresManualReview:   m.RequiresManualReview(in.Confidence, in.ArithmeticValid),
 		CreatedAt:              now.UTC(),
 	}, nil

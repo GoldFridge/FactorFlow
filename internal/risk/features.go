@@ -41,15 +41,48 @@ type featureRef struct {
 	name  string
 	value func(FeatureVector) money.Rate
 	coeff func(Coefficients) money.Rate
+	// set writes the feature back, so storage can rebuild a vector by the same names it
+	// was written under. Without it, a rename would silently load a zeroed feature.
+	set func(*FeatureVector, money.Rate)
 }
 
 var featureRefs = []featureRef{
-	{"dso_norm", func(f FeatureVector) money.Rate { return f.DSONorm }, func(c Coefficients) money.Rate { return c.DSONorm }},
-	{"late_payment_rate", func(f FeatureVector) money.Rate { return f.LatePaymentRate }, func(c Coefficients) money.Rate { return c.LatePaymentRate }},
-	{"dispute_flag", func(f FeatureVector) money.Rate { return f.DisputeFlag }, func(c Coefficients) money.Rate { return c.DisputeFlag }},
-	{"debtor_concentration", func(f FeatureVector) money.Rate { return f.DebtorConcentration }, func(c Coefficients) money.Rate { return c.DebtorConcentration }},
-	{"market_volatility", func(f FeatureVector) money.Rate { return f.MarketVolatility }, func(c Coefficients) money.Rate { return c.MarketVolatility }},
-	{"debtor_risk", func(f FeatureVector) money.Rate { return f.DebtorRisk }, func(c Coefficients) money.Rate { return c.DebtorRisk }},
+	{
+		"dso_norm",
+		func(f FeatureVector) money.Rate { return f.DSONorm },
+		func(c Coefficients) money.Rate { return c.DSONorm },
+		func(f *FeatureVector, v money.Rate) { f.DSONorm = v },
+	},
+	{
+		"late_payment_rate",
+		func(f FeatureVector) money.Rate { return f.LatePaymentRate },
+		func(c Coefficients) money.Rate { return c.LatePaymentRate },
+		func(f *FeatureVector, v money.Rate) { f.LatePaymentRate = v },
+	},
+	{
+		"dispute_flag",
+		func(f FeatureVector) money.Rate { return f.DisputeFlag },
+		func(c Coefficients) money.Rate { return c.DisputeFlag },
+		func(f *FeatureVector, v money.Rate) { f.DisputeFlag = v },
+	},
+	{
+		"debtor_concentration",
+		func(f FeatureVector) money.Rate { return f.DebtorConcentration },
+		func(c Coefficients) money.Rate { return c.DebtorConcentration },
+		func(f *FeatureVector, v money.Rate) { f.DebtorConcentration = v },
+	},
+	{
+		"market_volatility",
+		func(f FeatureVector) money.Rate { return f.MarketVolatility },
+		func(c Coefficients) money.Rate { return c.MarketVolatility },
+		func(f *FeatureVector, v money.Rate) { f.MarketVolatility = v },
+	},
+	{
+		"debtor_risk",
+		func(f FeatureVector) money.Rate { return f.DebtorRisk },
+		func(c Coefficients) money.Rate { return c.DebtorRisk },
+		func(f *FeatureVector, v money.Rate) { f.DebtorRisk = v },
+	},
 }
 
 // FeatureNames lists the features in their canonical order.

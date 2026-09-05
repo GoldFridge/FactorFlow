@@ -16,6 +16,8 @@ CREATE TABLE organizations (
     wallet           TEXT        NOT NULL,
     eligibility      TEXT        NOT NULL DEFAULT 'PENDING'
                                  CHECK (eligibility IN ('PENDING', 'ELIGIBLE', 'REJECTED')),
+    -- Why a demo eligibility check was refused. Operator-facing text, never evidence.
+    reason           TEXT        NOT NULL DEFAULT '',
     version          BIGINT      NOT NULL DEFAULT 1 CHECK (version > 0),
     created_at       TIMESTAMPTZ NOT NULL,
     updated_at       TIMESTAMPTZ NOT NULL
@@ -116,6 +118,9 @@ CREATE TABLE risk_assessments (
     currency                CHAR(3)         NOT NULL,
     market_snapshot_hash    TEXT            NOT NULL REFERENCES market_snapshots (payload_hash),
     confidential_commitment TEXT            NOT NULL CHECK (confidential_commitment ~ '^0x[0-9a-f]{64}$'),
+    -- The nonce the commitment was computed over. A commitment nobody can recompute proves
+    -- nothing, so the input that binds it to one workflow run is stored beside it.
+    confidential_nonce      TEXT            NOT NULL DEFAULT '',
     requires_manual_review  BOOLEAN         NOT NULL,
     created_at              TIMESTAMPTZ     NOT NULL
 );
