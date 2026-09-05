@@ -45,12 +45,23 @@ selected by configuration.
 ## Commands
 
 ```bash
-make test          # unit and property tests
-make test-all      # adds integration tests that need Docker
+make test          # unit and property tests, no Docker needed
+make test-all      # adds integration tests against a real PostgreSQL
 make lint          # go vet and golangci-lint
 make build         # build ./bin/factorflow
 make up            # local PostgreSQL via Docker Compose
 ```
+
+Integration tests run against a real database, never a mock: half of what a repository
+does lives in SQL, constraints and transactions. They start a PostgreSQL container through
+testcontainers, or use an existing database when one is named:
+
+```bash
+FF_TEST_DATABASE_URL=postgres://factorflow:factorflow@localhost:5432/factorflow?sslmode=disable make test-all
+```
+
+With neither a Docker daemon nor that variable, the integration tests skip rather than
+fail, so `make test` still works on a machine without Docker.
 
 ## Status
 
