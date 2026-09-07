@@ -35,6 +35,31 @@ CREATE TABLE memberships (
     PRIMARY KEY (organization_id, wallet)
 );
 
+-- A wallet proves who it is by signing a one-time challenge. The nonce is the primary key
+-- because its uniqueness is what makes a captured signature useless twice.
+CREATE TABLE auth_challenges (
+    nonce       TEXT PRIMARY KEY,
+    wallet      TEXT        NOT NULL,
+    issued_at   TIMESTAMPTZ NOT NULL,
+    expires_at  TIMESTAMPTZ NOT NULL,
+    consumed_at TIMESTAMPTZ
+);
+
+CREATE INDEX auth_challenges_expiry_idx ON auth_challenges (expires_at);
+
+-- Only the hash of a session token is stored, for the same reason a password would be
+-- hashed: a database dump must not be replayable as a login.
+CREATE TABLE sessions (
+    token_hash      TEXT PRIMARY KEY,
+    organization_id UUID        NOT NULL REFERENCES organizations (id) ON DELETE CASCADE,
+    wallet          TEXT        NOT NULL,
+    issued_at       TIMESTAMPTZ NOT NULL,
+    expires_at      TIMESTAMPTZ NOT NULL,
+    revoked_at      TIMESTAMPTZ
+);
+
+CREATE INDEX sessions_organization_idx ON sessions (organization_id, expires_at DESC);
+
 CREATE TABLE invoices (
     id            UUID PRIMARY KEY,
     issuer_id     UUID        NOT NULL REFERENCES organizations (id),
@@ -311,5 +336,7 @@ DROP TABLE IF EXISTS risk_assessments;
 DROP TABLE IF EXISTS market_snapshots;
 DROP TABLE IF EXISTS invoice_documents;
 DROP TABLE IF EXISTS invoices;
+DROP TABLE IF EXISTS sessions;
+DROP TABLE IF EXISTS auth_challenges;
 DROP TABLE IF EXISTS memberships;
 DROP TABLE IF EXISTS organizations;

@@ -131,6 +131,8 @@ TRUNCATE TABLE
     invoice_documents,
     invoices,
     memberships,
+    sessions,
+    auth_challenges,
     organizations
 RESTART IDENTITY CASCADE`
 
