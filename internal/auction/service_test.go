@@ -117,9 +117,6 @@ func TestOnlyTheIssuerMovesTheAuction(t *testing.T) {
 	_, err = f.service.Open(ctx, f.investor, a.ID)
 	require.ErrorIs(t, err, apperr.ErrForbidden)
 
-	_, err = f.service.Cancel(ctx, f.investor, a.ID, "not mine")
-	require.ErrorIs(t, err, apperr.ErrForbidden)
-
 	stored, err := f.service.Get(ctx, f.issuer, a.ID)
 	require.NoError(t, err)
 	assert.Equal(t, auction.StatusDraft, stored.Status, "nothing the stranger tried took effect")

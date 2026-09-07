@@ -522,3 +522,89 @@ func TestClearUnknownAuction(t *testing.T) {
 	_, err := f.service.ClearAuction(context.Background(), f.issuer, uuid.New())
 	require.ErrorIs(t, err, apperr.ErrNotFound)
 }
+
+// TestCancelReleasesTheInvoices is why cancellation lives here too: a withdrawn batch must
+// not strand its receivables in AUCTION_OPEN, unable to be listed again.
+func TestCancelReleasesTheInvoices(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+	first := f.tokenizedInvoice(t, f.issuer.OrganizationID, "INV-1")
+	second := f.tokenizedInvoice(t, f.issuer.OrganizationID, "INV-2")
+
+	a, err := f.service.OpenAuction(context.Background(), f.issuer, f.params(first.ID, second.ID))
+	require.NoError(t, err)
+
+	cancelled, err := f.service.CancelAuction(context.Background(), f.issuer, a.ID, "listed at the wrong price")
+	require.NoError(t, err)
+	assert.Equal(t, auction.StatusCancelled, cancelled.Status)
+
+	for _, id := range []uuid.UUID{first.ID, second.ID} {
+		stored, ok := f.store.Invoice(id)
+		require.True(t, ok)
+		assert.Equal(t, invoice.StatusTokenized, stored.Status, "the invoice is free to be listed again")
+		assert.Equal(t, "listed at the wrong price", stored.Reason)
+	}
+}
+
+func TestCancelIsForTheIssuerOnly(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+	inv := f.tokenizedInvoice(t, f.issuer.OrganizationID, "INV-1")
+
+	a, err := f.service.OpenAuction(context.Background(), f.issuer, f.params(inv.ID))
+	require.NoError(t, err)
+
+	_, err = f.service.CancelAuction(context.Background(), f.other, a.ID, "not mine")
+	require.ErrorIs(t, err, apperr.ErrForbidden)
+
+	stored, _ := f.store.Invoice(inv.ID)
+	assert.Equal(t, invoice.StatusAuctionOpen, stored.Status, "nothing the stranger tried took effect")
+}
+
+func TestCancelValidatesTheReasonAndState(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+	inv := f.tokenizedInvoice(t, f.issuer.OrganizationID, "INV-1")
+
+	a, err := f.service.OpenAuction(context.Background(), f.issuer, f.params(inv.ID))
+	require.NoError(t, err)
+
+	_, err = f.service.CancelAuction(context.Background(), f.issuer, a.ID, "   ")
+	require.ErrorIs(t, err, apperr.ErrValidation)
+
+	require.NoError(t, func() error {
+		_, err := f.service.CancelAuction(context.Background(), f.issuer, a.ID, "withdrawn")
+		return err
+	}())
+
+	_, err = f.service.CancelAuction(context.Background(), f.issuer, a.ID, "again")
+	require.ErrorIs(t, err, apperr.ErrConflict, "a cancelled batch does not move")
+}
+
+// TestCancelAfterClearingIsRefused protects a settled result: once a batch is cleared, its
+// allocations exist and withdrawing it would orphan them.
+func TestCancelAfterClearingIsRefused(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+	inv := f.tokenizedInvoice(t, f.issuer.OrganizationID, "INV-1")
+
+	a, err := f.service.OpenAuction(context.Background(), f.issuer, f.params(inv.ID))
+	require.NoError(t, err)
+	f.bid(t, a, uuid.New(), "0.05", "E", testNow)
+
+	f.clock = testClose
+	_, err = f.service.ClearAuction(context.Background(), f.issuer, a.ID)
+	require.NoError(t, err)
+
+	// A cleared batch may still be cancelled before settlement, but its allocated invoice
+	// has already moved on and is left alone.
+	_, err = f.service.CancelAuction(context.Background(), f.issuer, a.ID, "settlement abandoned")
+	require.NoError(t, err)
+
+	stored, _ := f.store.Invoice(inv.ID)
+	assert.Equal(t, invoice.StatusAllocated, stored.Status, "an allocated invoice is not released")
+}

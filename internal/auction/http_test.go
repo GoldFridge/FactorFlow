@@ -240,9 +240,6 @@ func TestIssuerOnlyEndpoints(t *testing.T) {
 
 	rec := f.request(t, http.MethodPost, "/api/v1/auctions/"+a.ID.String()+"/open", "")
 	assert.Equal(t, http.StatusForbidden, rec.Code)
-
-	rec = f.request(t, http.MethodPost, "/api/v1/auctions/"+a.ID.String()+"/cancel", `{"reason":"not mine"}`)
-	assert.Equal(t, http.StatusForbidden, rec.Code)
 }
 
 func TestAnonymousAndMalformedRequests(t *testing.T) {

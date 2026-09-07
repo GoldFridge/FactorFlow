@@ -28,6 +28,7 @@ func NewHandler(service *Service) *Handler { return &Handler{service: service} }
 func (h *Handler) Routes(r chi.Router) {
 	r.Post("/auctions", h.open)
 	r.Post("/auctions/{auctionID}/clear", h.clear)
+	r.Post("/auctions/{auctionID}/cancel", h.cancel)
 }
 
 // openRequest names the invoices to list and the bidding window.
@@ -82,6 +83,36 @@ func (h *Handler) clear(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpserver.WriteJSON(w, r, http.StatusOK, auction.DescribeSolution(solution))
+}
+
+// cancelRequest carries why a batch was withdrawn.
+type cancelRequest struct {
+	Reason string `json:"reason"`
+}
+
+func (h *Handler) cancel(w http.ResponseWriter, r *http.Request) {
+	auctionID, err := uuid.Parse(chi.URLParam(r, "auctionID"))
+	if err != nil {
+		httpserver.WriteProblem(w, r, apperr.Invalid("auctionID", "must be a UUID"))
+		return
+	}
+
+	var body cancelRequest
+	if err := httpserver.DecodeJSON(r, &body); err != nil {
+		httpserver.WriteProblem(w, r, err)
+		return
+	}
+
+	actor := httpserver.ActorFrom(r.Context())
+	cancelled, err := h.service.CancelAuction(r.Context(), Actor{
+		OrganizationID: actor.OrganizationID,
+		Operator:       actor.Operator,
+	}, auctionID, body.Reason)
+	if err != nil {
+		httpserver.WriteProblem(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, r, http.StatusOK, auction.Describe(cancelled))
 }
 
 func (b openRequest) toParams() (OpenParams, error) {

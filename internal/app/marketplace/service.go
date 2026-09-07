@@ -222,6 +222,64 @@ func (s *Service) ClearAuction(ctx context.Context, actor Actor, auctionID uuid.
 	return solution, nil
 }
 
+// CancelAuction withdraws a batch and returns its invoices to their issuer.
+//
+// The release is the point: an auction that ended without a sale must not leave its
+// receivables stranded in AUCTION_OPEN, unable to be listed again.
+func (s *Service) CancelAuction(ctx context.Context, actor Actor, auctionID uuid.UUID, reason string) (*auction.Auction, error) {
+	var cancelled *auction.Auction
+
+	err := s.db.InTx(ctx, func(q postgres.Querier) error {
+		a, err := s.auctions.GetAuction(ctx, q, auctionID)
+		if err != nil {
+			return err
+		}
+		if !actor.Operator && a.IssuerID != actor.OrganizationID {
+			return apperr.Forbiddenf("auction %s belongs to another issuer", auctionID)
+		}
+
+		expectedVersion := a.Version
+		if err := a.Cancel(reason, s.now()); err != nil {
+			return err
+		}
+		if err := s.auctions.UpdateAuction(ctx, q, a, expectedVersion); err != nil {
+			return err
+		}
+		if err := s.releaseInvoices(ctx, q, a, reason); err != nil {
+			return err
+		}
+
+		cancelled = a
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return cancelled, nil
+}
+
+// releaseInvoices returns every lot's invoice to TOKENIZED so it can be listed again.
+func (s *Service) releaseInvoices(ctx context.Context, q postgres.Querier, a *auction.Auction, reason string) error {
+	for _, lot := range a.Lots {
+		inv, err := s.invoices.Get(ctx, q, lot.InvoiceID)
+		if err != nil {
+			return err
+		}
+		if inv.Status != invoice.StatusAuctionOpen {
+			continue
+		}
+
+		expectedVersion := inv.Version
+		if err := inv.CancelAuction(reason, s.now()); err != nil {
+			return err
+		}
+		if err := s.invoices.Update(ctx, q, inv, expectedVersion); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // recordBidOutcomes marks each bid allocated or rejected.
 func (s *Service) recordBidOutcomes(ctx context.Context, q postgres.Querier, bids []*auction.Bid, solution *auction.Solution) error {
 	allocated := make(map[uuid.UUID]bool, len(solution.Allocations))

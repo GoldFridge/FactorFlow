@@ -32,7 +32,6 @@ func (h *Handler) Routes(r chi.Router) {
 	r.Get("/auctions", h.list)
 	r.Get("/auctions/{auctionID}", h.get)
 	r.Post("/auctions/{auctionID}/open", h.open)
-	r.Post("/auctions/{auctionID}/cancel", h.cancel)
 	r.Get("/auctions/{auctionID}/bids", h.bids)
 	r.Post("/auctions/{auctionID}/bids", h.placeBid)
 	r.Get("/auctions/{auctionID}/allocations", h.allocations)
@@ -52,10 +51,6 @@ type bidRequest struct {
 	MaxIssuerShare string            `json:"max_issuer_share"`
 	MaxDebtorShare string            `json:"max_debtor_share"`
 	MaxGradeShare  map[string]string `json:"max_grade_share"`
-}
-
-type reasonRequest struct {
-	Reason string `json:"reason"`
 }
 
 type lotResponse struct {
@@ -205,27 +200,6 @@ func (h *Handler) open(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a, err := h.service.Open(r.Context(), actorOf(r), id)
-	if err != nil {
-		httpserver.WriteProblem(w, r, err)
-		return
-	}
-	h.writeAuction(w, r, http.StatusOK, a)
-}
-
-func (h *Handler) cancel(w http.ResponseWriter, r *http.Request) {
-	id, err := idOf(r, "auctionID")
-	if err != nil {
-		httpserver.WriteProblem(w, r, err)
-		return
-	}
-
-	var body reasonRequest
-	if err := httpserver.DecodeJSON(r, &body); err != nil {
-		httpserver.WriteProblem(w, r, err)
-		return
-	}
-
-	a, err := h.service.Cancel(r.Context(), actorOf(r), id, body.Reason)
 	if err != nil {
 		httpserver.WriteProblem(w, r, err)
 		return

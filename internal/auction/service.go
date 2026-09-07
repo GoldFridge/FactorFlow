@@ -34,9 +34,9 @@ type Actor struct {
 // It owns who may do what and which writes happen together; the state machine, the
 // feasibility rules and the clearing algorithm stay in the domain and the solver.
 //
-// Clearing is not here. It has to move the invoices behind the lots as well as the auction,
-// and this module may not touch invoices, so the application layer runs it: one transaction
-// covering both, instead of two that can disagree.
+// Clearing and cancellation are not here. Both have to move the invoices behind the lots as
+// well as the auction, and this module may not touch invoices, so the application layer runs
+// them: one transaction covering both, instead of two that can disagree.
 type Service struct {
 	db     TxRunner
 	repo   Repository
@@ -106,13 +106,6 @@ func (s *Service) Create(ctx context.Context, actor Actor, p CreateParams) (*Auc
 func (s *Service) Open(ctx context.Context, actor Actor, auctionID uuid.UUID) (*Auction, error) {
 	return s.mutate(ctx, actor, auctionID, func(a *Auction) error {
 		return a.Open(s.now())
-	})
-}
-
-// Cancel ends an auction without settling it.
-func (s *Service) Cancel(ctx context.Context, actor Actor, auctionID uuid.UUID, reason string) (*Auction, error) {
-	return s.mutate(ctx, actor, auctionID, func(a *Auction) error {
-		return a.Cancel(reason, s.now())
 	})
 }
 
