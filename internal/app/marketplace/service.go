@@ -19,6 +19,7 @@ import (
 	"github.com/GoldFridge/factorflow/internal/platform/audit"
 	"github.com/GoldFridge/factorflow/internal/platform/postgres"
 	"github.com/GoldFridge/factorflow/internal/risk"
+	"github.com/GoldFridge/factorflow/internal/settlement"
 	"github.com/GoldFridge/factorflow/internal/tokenization"
 )
 
@@ -45,6 +46,8 @@ type Service struct {
 	assessments risk.Repository
 	assets      tokenization.Repository
 	auctions    auction.Repository
+	settlements settlement.Repository
+	wallets     OrganizationWallets
 	solver      *auction.Solver
 	audit       audit.Recorder
 	now         func() time.Time
@@ -75,6 +78,11 @@ type Config struct {
 	Assessments risk.Repository
 	Assets      tokenization.Repository
 	Auctions    auction.Repository
+	// Settlements and Wallets are what a deployment needs to move an allocated receivable.
+	// Without them the rest of the marketplace still works and settling reports that it is
+	// unavailable, rather than the process failing to start.
+	Settlements settlement.Repository
+	Wallets     OrganizationWallets
 	Solver      *auction.Solver
 	Audit       audit.Recorder
 	Now         func() time.Time
@@ -101,6 +109,8 @@ func NewService(cfg Config) *Service {
 		assessments: cfg.Assessments,
 		assets:      cfg.Assets,
 		auctions:    cfg.Auctions,
+		settlements: cfg.Settlements,
+		wallets:     cfg.Wallets,
 		solver:      cfg.Solver,
 		audit:       cfg.Audit,
 		now:         cfg.Now,

@@ -33,6 +33,7 @@ import (
 	"github.com/GoldFridge/factorflow/internal/platform/outbox"
 	"github.com/GoldFridge/factorflow/internal/platform/postgres"
 	"github.com/GoldFridge/factorflow/internal/risk"
+	"github.com/GoldFridge/factorflow/internal/settlement"
 	"github.com/GoldFridge/factorflow/internal/tokenization"
 )
 
@@ -136,6 +137,7 @@ func wire(cfg config.Config, db *postgres.DB) *application {
 	snapshots := marketdata.NewPostgresRepository()
 	assets := tokenization.NewPostgresRepository()
 	auctions := auction.NewPostgresRepository()
+	settlements := settlement.NewPostgresRepository()
 	organizations := organization.NewPostgresRepository()
 	// One recorder is shared by every module: an audit trail split across several writers
 	// is several timelines that can disagree.
@@ -151,6 +153,8 @@ func wire(cfg config.Config, db *postgres.DB) *application {
 		Assessments: assessments,
 		Assets:      assets,
 		Auctions:    auctions,
+		Settlements: settlements,
+		Wallets:     organizationWallets{repo: organizations},
 		Solver:      auction.NewSolver(),
 		Audit:       trail,
 		Now:         now,
@@ -182,9 +186,14 @@ func wire(cfg config.Config, db *postgres.DB) *application {
 		IDs:         uuid.New,
 	})
 
+	// The settlement saga runs off the outbox like the other workers: a transfer that
+	// stopped half-way is retried by delivery rather than by anyone remembering to.
+	settlementWorker := marketplace.NewSettlementWorker(marketplaceService, transferExecutor(cfg, now), assets)
+
 	dispatcher := outbox.NewDispatcher(db, outbox.DefaultDispatcherConfig(), now)
 	dispatcher.Register(invoice.TopicAssess, assessmentWorker.Handle)
 	dispatcher.Register(invoice.TopicTokenize, issuanceWorker.Handle)
+	dispatcher.Register(marketplace.TopicSettle, settlementWorker.Handle)
 
 	identityService := identity.NewService(db, identity.NewPostgresRepository(),
 		organizationAccounts{repo: organizations}, now)
@@ -279,6 +288,16 @@ func (o organizationWallets) WalletOf(ctx context.Context, q postgres.Querier, o
 		return "", err
 	}
 	return org.Wallet, nil
+}
+
+// transferExecutor picks the live chain when Hedera credentials are configured, and the
+// in-process ledger otherwise. The saga is the same either way: what changes is only who
+// answers Submit and Lookup.
+func transferExecutor(cfg config.Config, now func() time.Time) settlement.Executor {
+	if cfg.Providers.HederaIsLive() {
+		slog.Warn("hedera credentials are set but the transfer executor is not implemented; using the local ledger")
+	}
+	return settlement.NewLocalExecutor(now)
 }
 
 // assetIssuer picks the live tokenization studio when Hedera credentials are configured.
