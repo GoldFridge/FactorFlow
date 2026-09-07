@@ -273,6 +273,43 @@ CREATE TABLE allocation_certificates (
 
 -- The append-only audit trail. There is no update or delete path in the application, and
 -- the trigger below refuses one at the database level as well.
+-- A settlement is one allocated lot moving from its issuer to the investor that bought it.
+--
+-- PostgreSQL and the chain cannot share a transaction, so this is a saga with durable
+-- steps rather than one write: PREPARED, SUBMITTED, CONSENSUS_CONFIRMED, MIRROR_CONFIRMED,
+-- ACCOUNTED. The row is the memory between steps, which is what lets a crashed run resume
+-- instead of resubmitting a transfer that already happened.
+CREATE TABLE settlements (
+    id             UUID PRIMARY KEY,
+    auction_id     UUID        NOT NULL REFERENCES auctions (id) ON DELETE CASCADE,
+    lot_id         UUID        NOT NULL REFERENCES auction_lots (id) ON DELETE CASCADE,
+    bid_id         UUID        NOT NULL REFERENCES bids (id) ON DELETE CASCADE,
+    invoice_id     UUID        NOT NULL REFERENCES invoices (id),
+    asset_id       UUID        NOT NULL REFERENCES tokenized_assets (id),
+    investor_id    UUID        NOT NULL REFERENCES organizations (id),
+    from_wallet    TEXT        NOT NULL,
+    to_wallet      TEXT        NOT NULL,
+    notional_minor BIGINT      NOT NULL CHECK (notional_minor > 0),
+    price_minor    BIGINT      NOT NULL CHECK (price_minor > 0),
+    currency       CHAR(3)     NOT NULL,
+    -- operation_id is derived from the plan, not generated: a resubmission carries the
+    -- same id, so the executor can recognise a transfer it has already performed.
+    operation_id   TEXT        NOT NULL,
+    tx_id          TEXT        NOT NULL DEFAULT '',
+    state          TEXT        NOT NULL CHECK (state IN ('PREPARED', 'SUBMITTED', 'CONSENSUS_CONFIRMED', 'MIRROR_CONFIRMED', 'ACCOUNTED', 'FAILED')),
+    attempts       INTEGER     NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    last_error     TEXT        NOT NULL DEFAULT '',
+    version        BIGINT      NOT NULL DEFAULT 1 CHECK (version > 0),
+    created_at     TIMESTAMPTZ NOT NULL,
+    updated_at     TIMESTAMPTZ NOT NULL
+);
+
+-- One settlement per allocation, and one per operation id. Both are what make the
+-- business effect idempotent: a repeated settle command finds the plan that exists.
+CREATE UNIQUE INDEX settlements_allocation_key ON settlements (auction_id, lot_id, bid_id);
+CREATE UNIQUE INDEX settlements_operation_key ON settlements (operation_id);
+CREATE INDEX settlements_unfinished_idx ON settlements (state, updated_at) WHERE state <> 'ACCOUNTED';
+
 CREATE TABLE audit_events (
     id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     actor       TEXT        NOT NULL,
@@ -325,6 +362,7 @@ CREATE TABLE idempotency_keys (
 DROP TABLE IF EXISTS idempotency_keys;
 DROP TABLE IF EXISTS outbox_events;
 DROP TABLE IF EXISTS audit_events;
+DROP TABLE IF EXISTS settlements;
 DROP TABLE IF EXISTS allocation_certificates;
 DROP TABLE IF EXISTS allocation_rejections;
 DROP TABLE IF EXISTS allocations;
