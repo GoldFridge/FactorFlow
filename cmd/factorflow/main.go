@@ -19,7 +19,10 @@ import (
 	"github.com/GoldFridge/factorflow/internal/app/assessment"
 	"github.com/GoldFridge/factorflow/internal/app/issuance"
 	"github.com/GoldFridge/factorflow/internal/app/marketplace"
+	"github.com/GoldFridge/factorflow/internal/app/onboarding"
+	"github.com/GoldFridge/factorflow/internal/app/reporting"
 	"github.com/GoldFridge/factorflow/internal/auction"
+	"github.com/GoldFridge/factorflow/internal/identity"
 	"github.com/GoldFridge/factorflow/internal/invoice"
 	"github.com/GoldFridge/factorflow/internal/marketdata"
 	"github.com/GoldFridge/factorflow/internal/organization"
@@ -176,16 +179,47 @@ func wire(cfg config.Config, db *postgres.DB) *application {
 	dispatcher.Register(invoice.TopicAssess, assessmentWorker.Handle)
 	dispatcher.Register(invoice.TopicTokenize, issuanceWorker.Handle)
 
+	identityService := identity.NewService(db, identity.NewPostgresRepository(),
+		organizationAccounts{repo: organizations}, now)
+	identityHandler := identity.NewHandler(identityService, cfg.Env.IsProductionLike())
+
+	onboardingService := onboarding.NewService(onboarding.Config{
+		DB:            db,
+		Organizations: organizations,
+		Challenges:    identity.NewPostgresRepository(),
+		Sessions:      identityService,
+		// A demo has nobody to approve the first participant, so development grants
+		// eligibility on registration. Anywhere else it is an operator's decision.
+		AutoApprove: cfg.DemoAuthEnabled(),
+		Now:         now,
+		IDs:         uuid.New,
+	})
+	reportingService := reporting.NewService(reporting.Config{
+		DB:          db,
+		Invoices:    invoices,
+		Assessments: assessments,
+		Snapshots:   snapshots,
+		Market:      marketQuery(cfg),
+	})
+
 	idempotent := idempotency.NewMiddleware(db, now)
 	invoiceHandler := invoice.NewHandler(invoiceService)
 	auctionHandler := auction.NewHandler(auctionService)
 	marketplaceHandler := marketplace.NewHandler(marketplaceService)
+	onboardingHandler := onboarding.NewHandler(onboardingService)
+	reportingHandler := reporting.NewHandler(reportingService, now)
 
 	router := httpserver.NewRouter(httpserver.Dependencies{
 		Version: version,
 		Ready:   db.Ping,
 		Routes: func(r chi.Router) {
-			r.Use(httpserver.Authenticate(resolver(cfg, organizations, db)))
+			r.Use(httpserver.Authenticate(resolver(cfg, identityService, organizations, db)))
+
+			// Logging in cannot require being logged in, and neither can registering:
+			// a wallet with no organization has no session to present, so it proves
+			// itself with a signature instead.
+			identityHandler.Routes(r)
+			onboardingHandler.PublicRoutes(r)
 
 			r.Group(func(protected chi.Router) {
 				protected.Use(httpserver.RequireActor)
@@ -194,11 +228,33 @@ func wire(cfg config.Config, db *postgres.DB) *application {
 				invoiceHandler.Routes(protected)
 				auctionHandler.Routes(protected)
 				marketplaceHandler.Routes(protected)
+				onboardingHandler.Routes(protected)
+				reportingHandler.Routes(protected)
 			})
 		},
 	})
 
 	return &application{router: router, dispatcher: dispatcher}
+}
+
+// organizationAccounts answers identity's one question about an organization: which one a
+// wallet acts for, and what it is allowed to do. It is an adapter rather than an import so
+// the identity module does not depend on the whole organization module.
+type organizationAccounts struct {
+	repo organization.Repository
+}
+
+func (o organizationAccounts) ByWallet(ctx context.Context, q postgres.Querier, wallet string) (identity.Account, error) {
+	org, err := o.repo.GetByWallet(ctx, q, wallet)
+	if err != nil {
+		return identity.Account{}, err
+	}
+	return identity.Account{
+		OrganizationID: org.ID,
+		Wallet:         org.Wallet,
+		Eligible:       org.IsEligible(),
+		Operator:       org.Type == organization.TypeOperator,
+	}, nil
 }
 
 // organizationWallets answers the one question issuance has about an organization: which
@@ -253,18 +309,22 @@ func confidentialWorkflow(cfg config.Config) risk.Workflow {
 
 // resolver picks how a caller is identified.
 //
-// Wallet authentication is not implemented yet. In development a header names the acting
-// organization so the API can be exercised end to end; anywhere else there is no resolver
-// at all, and every protected route answers 401. An unimplemented login must fail closed,
-// not fall back to trusting a header.
-func resolver(cfg config.Config, organizations organization.Repository, db *postgres.DB) httpserver.Resolver {
+// A wallet session is the real mechanism and works in every environment. In development a
+// header may also name an organization, so the API can be driven by curl and by the seeded
+// demo without a browser wallet; outside development that fallback does not exist, so an
+// unauthenticated request is simply unauthenticated.
+func resolver(cfg config.Config, identityService *identity.Service, organizations organization.Repository, db *postgres.DB) httpserver.Resolver {
+	sessions := identity.NewResolver(identityService, identity.SessionCookie)
 	if !cfg.DemoAuthEnabled() {
-		slog.Warn("wallet authentication is not implemented; protected routes will answer 401")
-		return nil
+		return sessions
 	}
 
-	slog.Warn("development demo authentication is enabled: the X-Demo-Organization header names the caller")
+	slog.Warn("development demo authentication is enabled: the X-Demo-Organization header also names a caller")
 	return httpserver.ResolverFunc(func(r *http.Request) (httpserver.Actor, error) {
+		if actor, err := sessions.Resolve(r); err == nil && !actor.IsZero() {
+			return actor, nil
+		}
+
 		raw := r.Header.Get("X-Demo-Organization")
 		if raw == "" {
 			return httpserver.Actor{}, nil
@@ -274,9 +334,9 @@ func resolver(cfg config.Config, organizations organization.Repository, db *post
 			return httpserver.Actor{}, err
 		}
 
-		// Only the identity is taken from the header. Everything a rule depends on comes
-		// from the stored organization, so the demo shortcut cannot grant eligibility that
-		// the record does not have.
+		// Only the identity comes from the header. Everything a rule depends on is read
+		// from the stored organization, so the shortcut cannot grant eligibility the
+		// record does not have.
 		org, err := organizations.Get(r.Context(), db.Querier(), orgID)
 		if err != nil {
 			return httpserver.Actor{}, err
