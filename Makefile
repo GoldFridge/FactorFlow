@@ -16,11 +16,14 @@ run: ## Run the server locally
 test: ## Unit and property tests (no Docker required)
 	$(GO) test -short $(PKG)
 
+# -p 1 is not a preference. Each integration package starts its own PostgreSQL container,
+# and when several start at once the slower ones time out; pgtest then SKIPS rather than
+# fails, so a contended parallel run reports success with the database tests never run.
 test-all: ## All tests including integration (requires Docker)
-	$(GO) test $(PKG)
+	$(GO) test -p 1 -count=1 $(PKG)
 
 test-race: ## All tests with the race detector
-	$(GO) test -race $(PKG)
+	$(GO) test -race -p 1 -count=1 $(PKG)
 
 cover: ## Test coverage summary
 	$(GO) test -short -coverprofile=coverage.txt $(PKG)
