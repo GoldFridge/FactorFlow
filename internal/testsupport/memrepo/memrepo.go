@@ -24,8 +24,10 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/GoldFridge/factorflow/internal/auction"
+	"github.com/GoldFridge/factorflow/internal/identity"
 	"github.com/GoldFridge/factorflow/internal/invoice"
 	"github.com/GoldFridge/factorflow/internal/marketdata"
+	"github.com/GoldFridge/factorflow/internal/organization"
 	"github.com/GoldFridge/factorflow/internal/platform/apperr"
 	"github.com/GoldFridge/factorflow/internal/platform/postgres"
 	"github.com/GoldFridge/factorflow/internal/risk"
@@ -76,14 +78,17 @@ func (q *Querier) Executed(table string) bool {
 type Store struct {
 	mu sync.Mutex
 
-	invoices    map[uuid.UUID]invoice.Invoice
-	documents   map[uuid.UUID]invoice.Document
-	assessments map[uuid.UUID]risk.Assessment
-	snapshots   map[string]marketdata.Snapshot
-	assets      map[uuid.UUID]tokenization.Asset
-	auctions    map[uuid.UUID]auction.Auction
-	bids        map[uuid.UUID]auction.Bid
-	solutions   map[uuid.UUID]auction.Solution
+	organizations map[uuid.UUID]organization.Organization
+	challenges    map[string]identity.Challenge
+	sessions      map[string]identity.Session
+	invoices      map[uuid.UUID]invoice.Invoice
+	documents     map[uuid.UUID]invoice.Document
+	assessments   map[uuid.UUID]risk.Assessment
+	snapshots     map[string]marketdata.Snapshot
+	assets        map[uuid.UUID]tokenization.Asset
+	auctions      map[uuid.UUID]auction.Auction
+	bids          map[uuid.UUID]auction.Bid
+	solutions     map[uuid.UUID]auction.Solution
 
 	snapshot *state
 	querier  *Querier
@@ -94,6 +99,10 @@ type Store struct {
 }
 
 type state struct {
+	organizations map[uuid.UUID]organization.Organization
+	challenges    map[string]identity.Challenge
+	sessions      map[string]identity.Session
+
 	invoices    map[uuid.UUID]invoice.Invoice
 	documents   map[uuid.UUID]invoice.Document
 	assessments map[uuid.UUID]risk.Assessment
@@ -107,6 +116,10 @@ type state struct {
 // New returns an empty store.
 func New() *Store {
 	return &Store{
+		organizations: map[uuid.UUID]organization.Organization{},
+		challenges:    map[string]identity.Challenge{},
+		sessions:      map[string]identity.Session{},
+
 		invoices:    map[uuid.UUID]invoice.Invoice{},
 		documents:   map[uuid.UUID]invoice.Document{},
 		assessments: map[uuid.UUID]risk.Assessment{},
@@ -146,6 +159,10 @@ func (s *Store) begin() {
 	defer s.mu.Unlock()
 
 	s.snapshot = &state{
+		organizations: copyMap(s.organizations),
+		challenges:    copyMap(s.challenges),
+		sessions:      copyMap(s.sessions),
+
 		invoices:    copyMap(s.invoices),
 		documents:   copyMap(s.documents),
 		assessments: copyMap(s.assessments),
@@ -164,6 +181,9 @@ func (s *Store) rollback() {
 	if s.snapshot == nil {
 		return
 	}
+	s.organizations = s.snapshot.organizations
+	s.challenges = s.snapshot.challenges
+	s.sessions = s.snapshot.sessions
 	s.invoices = s.snapshot.invoices
 	s.documents = s.snapshot.documents
 	s.assessments = s.snapshot.assessments
