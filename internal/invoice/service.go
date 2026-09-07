@@ -16,6 +16,8 @@ import (
 const (
 	// TopicAssess asks the confidential workflow to assess an invoice.
 	TopicAssess = "invoice.assess"
+	// TopicTokenize asks the asset issuer to mint the approved receivable.
+	TopicTokenize = "invoice.tokenize"
 )
 
 // TxRunner is the transaction boundary the service needs.
@@ -189,6 +191,66 @@ func (s *Service) RequestAssessment(ctx context.Context, actor Actor, invoiceID 
 		return nil, err
 	}
 	return updated, nil
+}
+
+// tokenizeCommand is the payload the issuance worker consumes. It names the invoice and
+// nothing else: the worker reads the facts it needs from storage, so a command that sat in
+// the queue cannot carry a stale face value onto the chain.
+type tokenizeCommand struct {
+	InvoiceID uuid.UUID `json:"invoice_id"`
+	IssuerID  uuid.UUID `json:"issuer_id"`
+}
+
+// RequestTokenization queues issuance of an approved invoice.
+//
+// The state change and the queued command commit together, so an invoice can never sit in
+// TOKENIZING with nothing on its way to mint it.
+func (s *Service) RequestTokenization(ctx context.Context, actor Actor, invoiceID uuid.UUID, traceID string) (*Invoice, error) {
+	var updated *Invoice
+
+	err := s.db.InTx(ctx, func(q postgres.Querier) error {
+		inv, err := s.load(ctx, q, actor, invoiceID)
+		if err != nil {
+			return err
+		}
+
+		expectedVersion := inv.Version
+		if err := inv.StartTokenization(s.now()); err != nil {
+			return err
+		}
+		if err := s.repo.Update(ctx, q, inv, expectedVersion); err != nil {
+			return err
+		}
+
+		if err := outbox.Publish(ctx, q, TopicTokenize, tokenizeCommand{
+			InvoiceID: inv.ID,
+			IssuerID:  inv.IssuerID,
+		}, traceID, s.now()); err != nil {
+			return err
+		}
+
+		updated = inv
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return updated, nil
+}
+
+// OpenAuction moves a tokenized invoice into an open auction. It is called by the
+// application layer once the batch itself exists.
+func (s *Service) OpenAuction(ctx context.Context, q postgres.Querier, inv *Invoice) error {
+	expectedVersion := inv.Version
+	if err := inv.OpenAuction(s.now()); err != nil {
+		return err
+	}
+	return s.repo.Update(ctx, q, inv, expectedVersion)
+}
+
+// LoadForAuction returns an invoice the caller may offer, inside the caller's transaction.
+func (s *Service) LoadForAuction(ctx context.Context, q postgres.Querier, actor Actor, invoiceID uuid.UUID) (*Invoice, error) {
+	return s.load(ctx, q, actor, invoiceID)
 }
 
 // Approve records the issuer confirming the extracted facts.

@@ -97,8 +97,9 @@ const validBidBody = `{
 	"max_grade_share": {"C": "0.30"}
 }`
 
-// TestMarketplaceEndpoints walks the investor's path: see the batch, bid on it, and read
-// back the clearing.
+// TestMarketplaceEndpoints walks the investor's path: see the batch and bid on it. The
+// clearing endpoint belongs to the application layer, because it moves invoices too, and is
+// tested there.
 func TestMarketplaceEndpoints(t *testing.T) {
 	t.Parallel()
 
@@ -128,41 +129,6 @@ func TestMarketplaceEndpoints(t *testing.T) {
 	assert.Equal(t, "ACTIVE", bid["status"])
 	assert.Equal(t, "50000.00", bid["budget"])
 	assert.Equal(t, "0.080000", bid["min_yield"])
-
-	f.as(f.issuer)
-	f.clock = testClose
-	rec = f.request(t, http.MethodPost, "/api/v1/auctions/"+a.ID.String()+"/clear", "")
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-
-	solution := decodeBody(t, rec)
-	assert.True(t, solution["verified"].(bool))
-	assert.Regexp(t, `^0x[0-9a-f]{64}$`, solution["certificate_hash"])
-	assert.Len(t, solution["allocations"], 1)
-
-	rec = f.request(t, http.MethodGet, "/api/v1/auctions/"+a.ID.String()+"/allocations", "")
-	require.Equal(t, http.StatusOK, rec.Code)
-	assert.Equal(t, solution["certificate_hash"], decodeBody(t, rec)["certificate_hash"])
-}
-
-// TestRejectedBidLearnsWhy is the explainability requirement at the API boundary.
-func TestRejectedBidLearnsWhy(t *testing.T) {
-	t.Parallel()
-
-	f := newAPIFixture(t)
-	a := f.openAuction(t)
-
-	picky := strings.Replace(validBidBody, `"min_yield": "0.08"`, `"min_yield": "0.90"`, 1)
-	rec := f.request(t, http.MethodPost, "/api/v1/auctions/"+a.ID.String()+"/bids", picky)
-	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
-
-	f.as(f.issuer)
-	f.clock = testClose
-	rec = f.request(t, http.MethodPost, "/api/v1/auctions/"+a.ID.String()+"/clear", "")
-	require.Equal(t, http.StatusOK, rec.Code)
-
-	rejections := decodeBody(t, rec)["rejections"].([]any)
-	require.Len(t, rejections, 1)
-	assert.Equal(t, "yield", rejections[0].(map[string]any)["constraint"])
 }
 
 func TestBidValidation(t *testing.T) {
@@ -272,15 +238,10 @@ func TestIssuerOnlyEndpoints(t *testing.T) {
 	a := f.openAuction(t)
 	f.clock = testClose
 
-	for _, path := range []string{
-		"/api/v1/auctions/" + a.ID.String() + "/clear",
-		"/api/v1/auctions/" + a.ID.String() + "/open",
-	} {
-		rec := f.request(t, http.MethodPost, path, "")
-		assert.Equalf(t, http.StatusForbidden, rec.Code, "path %s", path)
-	}
+	rec := f.request(t, http.MethodPost, "/api/v1/auctions/"+a.ID.String()+"/open", "")
+	assert.Equal(t, http.StatusForbidden, rec.Code)
 
-	rec := f.request(t, http.MethodPost, "/api/v1/auctions/"+a.ID.String()+"/cancel", `{"reason":"not mine"}`)
+	rec = f.request(t, http.MethodPost, "/api/v1/auctions/"+a.ID.String()+"/cancel", `{"reason":"not mine"}`)
 	assert.Equal(t, http.StatusForbidden, rec.Code)
 }
 

@@ -10,6 +10,7 @@ package risk
 
 import (
 	"errors"
+	"sync"
 
 	"github.com/shopspring/decimal"
 
@@ -144,12 +145,25 @@ func (f FeatureVector) logOdds(c Coefficients) money.Rate {
 	return z
 }
 
+// expMu serializes the decimal library's Taylor-series exponential.
+//
+// shopspring/decimal caches factorials in a package-level slice and grows it with an
+// unsynchronized append, so two goroutines computing an exponential at once can panic on an
+// index out of range. Pricing runs from HTTP handlers and background workers at the same
+// time, so the call is serialized here. The exponential is a few microseconds of integer
+// arithmetic: the lock costs nothing measurable and removes a crash that only appears under
+// concurrency, which is exactly when it is hardest to diagnose.
+var expMu sync.Mutex
+
 // sigmoid computes 1 / (1 + exp(-z)) in exact decimal arithmetic.
 //
 // float64 is not used anywhere in scoring: two machines must agree on a probability of
 // default to the last digit for an assessment to be reproducible from stored inputs.
 func sigmoid(z money.Rate) (money.Rate, error) {
+	expMu.Lock()
 	expNegZ, err := z.Decimal().Neg().ExpTaylor(expPrecision)
+	expMu.Unlock()
+
 	if err != nil {
 		return money.Rate{}, apperr.Invalid("features", "log-odds %s is outside the model's supported range", z)
 	}

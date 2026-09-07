@@ -37,6 +37,7 @@ func (h *Handler) Routes(r chi.Router) {
 	r.Post("/invoices/{invoiceID}/document", h.attachDocument)
 	r.Post("/invoices/{invoiceID}/assess", h.assess)
 	r.Post("/invoices/{invoiceID}/approve", h.approve)
+	r.Post("/invoices/{invoiceID}/tokenize", h.tokenize)
 	r.Post("/invoices/{invoiceID}/reject", h.reject)
 }
 
@@ -241,6 +242,21 @@ func (h *Handler) approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpserver.WriteJSON(w, r, http.StatusOK, toResponse(inv))
+}
+
+func (h *Handler) tokenize(w http.ResponseWriter, r *http.Request) {
+	id, err := invoiceIDOf(r)
+	if err != nil {
+		httpserver.WriteProblem(w, r, err)
+		return
+	}
+
+	inv, err := h.service.RequestTokenization(r.Context(), actorOf(r), id, httpserver.TraceIDFrom(r.Context()))
+	if err != nil {
+		httpserver.WriteProblem(w, r, err)
+		return
+	}
+	httpserver.WriteJSON(w, r, http.StatusAccepted, toResponse(inv))
 }
 
 func (h *Handler) reject(w http.ResponseWriter, r *http.Request) {

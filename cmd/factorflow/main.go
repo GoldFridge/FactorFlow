@@ -17,14 +17,19 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/GoldFridge/factorflow/internal/app/assessment"
+	"github.com/GoldFridge/factorflow/internal/app/issuance"
+	"github.com/GoldFridge/factorflow/internal/app/marketplace"
+	"github.com/GoldFridge/factorflow/internal/auction"
 	"github.com/GoldFridge/factorflow/internal/invoice"
 	"github.com/GoldFridge/factorflow/internal/marketdata"
+	"github.com/GoldFridge/factorflow/internal/organization"
 	"github.com/GoldFridge/factorflow/internal/platform/config"
 	"github.com/GoldFridge/factorflow/internal/platform/httpserver"
 	"github.com/GoldFridge/factorflow/internal/platform/idempotency"
 	"github.com/GoldFridge/factorflow/internal/platform/outbox"
 	"github.com/GoldFridge/factorflow/internal/platform/postgres"
 	"github.com/GoldFridge/factorflow/internal/risk"
+	"github.com/GoldFridge/factorflow/internal/tokenization"
 )
 
 // version is overridden at build time with -ldflags "-X main.version=...".
@@ -125,9 +130,24 @@ func wire(cfg config.Config, db *postgres.DB) *application {
 	invoices := invoice.NewPostgresRepository()
 	assessments := risk.NewPostgresRepository()
 	snapshots := marketdata.NewPostgresRepository()
+	assets := tokenization.NewPostgresRepository()
+	auctions := auction.NewPostgresRepository()
+	organizations := organization.NewPostgresRepository()
 
 	market := marketdata.NewService(marketProvider(cfg), marketdata.NewNormalizer(), now)
+
 	invoiceService := invoice.NewService(db, invoices, now, uuid.New)
+	auctionService := auction.NewService(db, auctions, auction.NewSolver(), now, uuid.New)
+	marketplaceService := marketplace.NewService(marketplace.Config{
+		DB:          db,
+		Invoices:    invoices,
+		Assessments: assessments,
+		Assets:      assets,
+		Auctions:    auctions,
+		Solver:      auction.NewSolver(),
+		Now:         now,
+		IDs:         uuid.New,
+	})
 
 	assessmentWorker := assessment.NewAssessmentWorker(assessment.WorkerConfig{
 		DB:          db,
@@ -141,28 +161,67 @@ func wire(cfg config.Config, db *postgres.DB) *application {
 		Now:         now,
 		IDs:         uuid.New,
 	})
+	issuanceWorker := issuance.NewWorker(issuance.Config{
+		DB:          db,
+		Invoices:    invoices,
+		Assessments: assessments,
+		Assets:      assets,
+		Wallets:     organizationWallets{repo: organizations},
+		Issuer:      assetIssuer(cfg),
+		Now:         now,
+		IDs:         uuid.New,
+	})
 
 	dispatcher := outbox.NewDispatcher(db, outbox.DefaultDispatcherConfig(), now)
 	dispatcher.Register(invoice.TopicAssess, assessmentWorker.Handle)
+	dispatcher.Register(invoice.TopicTokenize, issuanceWorker.Handle)
 
 	idempotent := idempotency.NewMiddleware(db, now)
 	invoiceHandler := invoice.NewHandler(invoiceService)
+	auctionHandler := auction.NewHandler(auctionService)
+	marketplaceHandler := marketplace.NewHandler(marketplaceService)
 
 	router := httpserver.NewRouter(httpserver.Dependencies{
 		Version: version,
 		Ready:   db.Ping,
 		Routes: func(r chi.Router) {
-			r.Use(httpserver.Authenticate(resolver(cfg)))
+			r.Use(httpserver.Authenticate(resolver(cfg, organizations, db)))
 
 			r.Group(func(protected chi.Router) {
 				protected.Use(httpserver.RequireActor)
 				protected.Use(idempotent.Handler)
+
 				invoiceHandler.Routes(protected)
+				auctionHandler.Routes(protected)
+				marketplaceHandler.Routes(protected)
 			})
 		},
 	})
 
 	return &application{router: router, dispatcher: dispatcher}
+}
+
+// organizationWallets answers the one question issuance has about an organization: which
+// wallet receives the supply. It is an adapter rather than an import so the issuance worker
+// does not depend on the whole organization module for a single string.
+type organizationWallets struct {
+	repo organization.Repository
+}
+
+func (o organizationWallets) WalletOf(ctx context.Context, q postgres.Querier, organizationID uuid.UUID) (string, error) {
+	org, err := o.repo.Get(ctx, q, organizationID)
+	if err != nil {
+		return "", err
+	}
+	return org.Wallet, nil
+}
+
+// assetIssuer picks the live tokenization studio when Hedera credentials are configured.
+func assetIssuer(cfg config.Config) tokenization.Issuer {
+	if cfg.Providers.HederaIsLive() {
+		slog.Warn("hedera credentials are set but the ATS adapter is not implemented; using the local issuer")
+	}
+	return tokenization.NewLocalIssuer()
 }
 
 // marketProvider picks the live gateway when one is configured, and the deterministic demo
@@ -198,7 +257,7 @@ func confidentialWorkflow(cfg config.Config) risk.Workflow {
 // organization so the API can be exercised end to end; anywhere else there is no resolver
 // at all, and every protected route answers 401. An unimplemented login must fail closed,
 // not fall back to trusting a header.
-func resolver(cfg config.Config) httpserver.Resolver {
+func resolver(cfg config.Config, organizations organization.Repository, db *postgres.DB) httpserver.Resolver {
 	if !cfg.DemoAuthEnabled() {
 		slog.Warn("wallet authentication is not implemented; protected routes will answer 401")
 		return nil
@@ -214,10 +273,21 @@ func resolver(cfg config.Config) httpserver.Resolver {
 		if err != nil {
 			return httpserver.Actor{}, err
 		}
+
+		// Only the identity is taken from the header. Everything a rule depends on comes
+		// from the stored organization, so the demo shortcut cannot grant eligibility that
+		// the record does not have.
+		org, err := organizations.Get(r.Context(), db.Querier(), orgID)
+		if err != nil {
+			return httpserver.Actor{}, err
+		}
+
 		return httpserver.Actor{
-			OrganizationID: orgID,
+			OrganizationID: org.ID,
+			Wallet:         org.Wallet,
 			Role:           httpserver.RoleOwner,
-			Operator:       r.Header.Get("X-Demo-Operator") == "true",
+			Eligible:       org.IsEligible(),
+			Operator:       org.Type == organization.TypeOperator,
 		}, nil
 	})
 }

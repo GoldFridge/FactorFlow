@@ -1,6 +1,7 @@
 package risk_test
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -231,4 +232,45 @@ func TestFeatureNamesAreCanonical(t *testing.T) {
 		"market_volatility",
 		"debtor_risk",
 	}, risk.FeatureNames())
+}
+
+// TestProbabilityOfDefaultIsSafeUnderConcurrency is a regression test for a crash that only
+// appears under load: the decimal library grows a package-level factorial cache without a
+// lock, so two goroutines computing an exponential at once used to panic. Pricing runs from
+// HTTP handlers and background workers simultaneously, so this must hold.
+func TestProbabilityOfDefaultIsSafeUnderConcurrency(t *testing.T) {
+	t.Parallel()
+
+	m := risk.ModelV1()
+	features := []risk.FeatureVector{
+		uniformFeatures("0"),
+		uniformFeatures("0.25"),
+		referenceFeatures(),
+		uniformFeatures("0.75"),
+		uniformFeatures("1"),
+	}
+
+	var wg sync.WaitGroup
+	results := make([]string, len(features)*20)
+
+	for round := range 20 {
+		for i, f := range features {
+			wg.Add(1)
+			go func(index int, vector risk.FeatureVector) {
+				defer wg.Done()
+
+				pd, err := m.ProbabilityOfDefault(vector)
+				require.NoError(t, err)
+				results[index] = pd.StringFixed(6)
+			}(round*len(features)+i, f)
+		}
+	}
+	wg.Wait()
+
+	// Every vector must also have produced the same answer it produces alone.
+	for i, f := range features {
+		expected, err := m.ProbabilityOfDefault(f)
+		require.NoError(t, err)
+		assert.Equal(t, expected.StringFixed(6), results[i])
+	}
 }

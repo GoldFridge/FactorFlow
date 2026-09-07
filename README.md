@@ -15,14 +15,17 @@ constraint-aware batch auction.
 The deterministic core is complete and runs end to end against PostgreSQL:
 
 ```
-create invoice → attach encrypted document → queue confidential assessment
-              → confidential workflow → live market snapshot → PD/LGD/EL and reserve price
-              → constrained batch auction → verified allocation certificate
+create invoice → attach encrypted document → confidential assessment
+              → live market snapshot → PD/LGD/EL and reserve price
+              → approve → mint the tokenized asset
+              → open an auction → constrained bids → verified allocation certificate
 ```
 
-Verified by running it: an invoice created over the API reaches `ASSESSED` with a stored
-price bound to the market snapshot and the workflow commitment it came from, delivered
-through the outbox by the background worker.
+Verified by running it against PostgreSQL: an invoice created over the API is assessed and
+priced by the background worker, tokenized through the issuer port, listed as a lot at the
+price the risk model published, bid on by two investors, and cleared. The financed invoice
+ends at `ALLOCATED`, the winning bid at `ALLOCATED`, and the losing one is told which of its
+own limits refused the lot.
 
 | Area | State |
 |---|---|
@@ -32,12 +35,15 @@ through the outbox by the background worker.
 | Pricing | Benchmark + risk/liquidity/concentration premiums, reserve price |
 | Market data | Weighted median benchmark, winsorization, TTL, hashed snapshots |
 | Batch auction | Min-cost max-flow, minimum lots, exposure repair, allocation certificate |
+| Auction API | Open a batch, bid, clear, read allocations and rejection reasons |
 | Independent verifier | Recomputes every constraint; 20 tampering cases covered |
 | Persistence | Schema, repositories, transactional outbox, idempotent writes |
 | HTTP API | Invoice endpoints, RFC 9457 problems, trace ids, security headers |
+| Tokenization | Asset lifecycle, issuer port, in-process issuer |
+| Application layer | Assessment and issuance workers, opening and clearing auctions |
 | Confidential workflow | Port plus a deterministic in-process implementation |
 
-Not implemented yet: wallet authentication, Hedera ATS tokenization, settlement saga,
+Not implemented yet: wallet authentication, the Hedera ATS adapter, the settlement saga,
 x402 paid endpoints, the live Graph gateway adapter, the live CRE client, and the React
 frontend. Every one of those sits behind a port that the in-process implementation already
 satisfies, so the path they plug into is the path the tests exercise.
@@ -48,12 +54,13 @@ A modular monolith: one Go process, one PostgreSQL database, hard package bounda
 
 ```
 cmd/factorflow/            process entrypoint and wiring
-internal/app/              orchestration across modules (the assessment worker)
+internal/app/              orchestration across modules: assessment, issuance, marketplace
 internal/organization/     issuer/investor profiles, demo eligibility
 internal/invoice/          invoice aggregate, state machine, service, endpoints
 internal/risk/             deterministic PD/LGD/EL scoring, pricing, workflow port
 internal/marketdata/       The Graph snapshots and benchmark normalization
 internal/auction/          lots, constrained bids, solver, verifier, certificate
+internal/tokenization/     tokenized asset, chain lifecycle, issuer port
 internal/platform/         money, apperr, postgres, outbox, idempotency, httpserver, config
 migrations/                goose schema, embedded in the binary
 ```
@@ -115,9 +122,11 @@ curl -X POST localhost:8080/api/v1/invoices \
        "currency":"USD","issued_at":"2026-09-06T00:00:00Z","due_at":"2026-11-05T00:00:00Z"}'
 ```
 
-`POST /invoices/{id}/document` records the encrypted upload, `POST /invoices/{id}/assess`
-queues the confidential assessment, and the outbox worker fills in the score and the price
-within a second.
+`POST /invoices/{id}/document` records the encrypted upload and `POST /invoices/{id}/assess`
+queues the confidential assessment; the outbox worker fills in the score and the price
+within a second. Then `approve`, `tokenize`, and `POST /auctions` with the invoice ids opens
+the batch. Investors bid at `POST /auctions/{id}/bids`, and `POST /auctions/{id}/clear`
+after the closing time returns the allocation and its certificate.
 
 ## Configuration
 

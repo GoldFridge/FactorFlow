@@ -33,6 +33,10 @@ type Actor struct {
 //
 // It owns who may do what and which writes happen together; the state machine, the
 // feasibility rules and the clearing algorithm stay in the domain and the solver.
+//
+// Clearing is not here. It has to move the invoices behind the lots as well as the auction,
+// and this module may not touch invoices, so the application layer runs it: one transaction
+// covering both, instead of two that can disagree.
 type Service struct {
 	db     TxRunner
 	repo   Repository
@@ -216,95 +220,6 @@ func (s *Service) CancelBid(ctx context.Context, actor Actor, bidID uuid.UUID) (
 		return nil, err
 	}
 	return updated, nil
-}
-
-// Clear runs the solver over a closed auction and records the result.
-//
-// Everything happens in one transaction: the auction moves to CLEARED, the allocations,
-// the rejection reasons and the certificate are written, and every bid learns whether it
-// was allocated. A partially recorded clearing would leave investors unable to tell what
-// they own.
-//
-// That is also why a failure needs no CLEARING_FAILED record here. Nothing escaped the
-// transaction, so the auction is exactly as it was and the issuer can simply clear again
-// once the cause is fixed. The FAILED state is for settlement, which touches the chain and
-// cannot be rolled back.
-func (s *Service) Clear(ctx context.Context, actor Actor, auctionID uuid.UUID) (*Solution, error) {
-	var solution *Solution
-
-	err := s.db.InTx(ctx, func(q postgres.Querier) error {
-		a, err := s.load(ctx, q, actor, auctionID)
-		if err != nil {
-			return err
-		}
-
-		bids, err := s.repo.ListBids(ctx, q, a.ID)
-		if err != nil {
-			return err
-		}
-
-		clearingVersion := a.Version
-		if err := a.StartClearing(s.now()); err != nil {
-			return err
-		}
-		if err := s.repo.UpdateAuction(ctx, q, a, clearingVersion); err != nil {
-			return err
-		}
-
-		result, err := s.solver.Clear(a, bids, s.now())
-		if err != nil {
-			return err
-		}
-
-		if err := s.repo.SaveSolution(ctx, q, result, s.now()); err != nil {
-			return err
-		}
-		if err := s.recordBidOutcomes(ctx, q, bids, result); err != nil {
-			return err
-		}
-
-		clearedVersion := a.Version
-		if err := a.MarkCleared(result.SolverVersion, result.CertificateHash, s.now()); err != nil {
-			return err
-		}
-		if err := s.repo.UpdateAuction(ctx, q, a, clearedVersion); err != nil {
-			return err
-		}
-
-		solution = result
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	return solution, nil
-}
-
-// recordBidOutcomes marks each bid allocated or rejected.
-func (s *Service) recordBidOutcomes(ctx context.Context, q postgres.Querier, bids []*Bid, solution *Solution) error {
-	allocated := make(map[uuid.UUID]bool, len(solution.Allocations))
-	for _, allocation := range solution.Allocations {
-		allocated[allocation.BidID] = true
-	}
-
-	for _, bid := range bids {
-		if bid.Status != BidStatusActive {
-			continue
-		}
-
-		expectedVersion := bid.Version
-		if allocated[bid.ID] {
-			bid.Status = BidStatusAllocated
-		} else {
-			bid.Status = BidStatusRejected
-		}
-		bid.Version++
-
-		if err := s.repo.UpdateBid(ctx, q, bid, expectedVersion); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // Get returns one auction with its lots.

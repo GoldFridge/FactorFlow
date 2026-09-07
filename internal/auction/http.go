@@ -33,7 +33,6 @@ func (h *Handler) Routes(r chi.Router) {
 	r.Get("/auctions/{auctionID}", h.get)
 	r.Post("/auctions/{auctionID}/open", h.open)
 	r.Post("/auctions/{auctionID}/cancel", h.cancel)
-	r.Post("/auctions/{auctionID}/clear", h.clear)
 	r.Get("/auctions/{auctionID}/bids", h.bids)
 	r.Post("/auctions/{auctionID}/bids", h.placeBid)
 	r.Get("/auctions/{auctionID}/allocations", h.allocations)
@@ -232,21 +231,6 @@ func (h *Handler) cancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.writeAuction(w, r, http.StatusOK, a)
-}
-
-func (h *Handler) clear(w http.ResponseWriter, r *http.Request) {
-	id, err := idOf(r, "auctionID")
-	if err != nil {
-		httpserver.WriteProblem(w, r, err)
-		return
-	}
-
-	solution, err := h.service.Clear(r.Context(), actorOf(r), id)
-	if err != nil {
-		httpserver.WriteProblem(w, r, err)
-		return
-	}
-	httpserver.WriteJSON(w, r, http.StatusOK, toSolutionResponse(solution))
 }
 
 func (h *Handler) placeBid(w http.ResponseWriter, r *http.Request) {
@@ -539,4 +523,23 @@ func actorOf(r *http.Request) Actor {
 		Eligible:       actor.Eligible,
 		Operator:       actor.Operator,
 	}
+}
+
+// DescribeSolution renders a clearing in the module's own wire shape, for the application
+// layer's clearing endpoint.
+func DescribeSolution(s *Solution) any { return toSolutionResponse(s) }
+
+// Describe renders an auction in the module's own wire shape.
+//
+// The application layer opens auctions, and its response has to look exactly like this
+// module's, so a client parses one auction representation whichever endpoint returned it.
+func Describe(a *Auction) any {
+	response, err := toAuctionResponse(a)
+	if err != nil {
+		// The only way this fails is a lot whose economics do not compute, which the
+		// domain refuses to build; returning the error shape keeps that visible rather
+		// than silently emitting a half-filled auction.
+		return map[string]string{"id": a.ID.String(), "error": err.Error()}
+	}
+	return response
 }
