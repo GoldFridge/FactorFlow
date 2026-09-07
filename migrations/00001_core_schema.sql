@@ -127,6 +127,30 @@ CREATE TABLE risk_assessments (
 
 CREATE INDEX risk_assessments_invoice_idx ON risk_assessments (invoice_id, created_at DESC);
 
+-- One approved invoice becomes one tokenized asset. The chain identifiers are text because
+-- they are whatever the network calls them: a Hedera token id, an EVM contract address, or
+-- the local identifier the in-process issuer mints when no network is configured.
+CREATE TABLE tokenized_assets (
+    id            UUID PRIMARY KEY,
+    invoice_id    UUID        NOT NULL REFERENCES invoices (id) ON DELETE CASCADE,
+    issuer_id     UUID        NOT NULL REFERENCES organizations (id),
+    network       TEXT        NOT NULL,
+    token_id      TEXT        NOT NULL,
+    contract_id   TEXT        NOT NULL DEFAULT '',
+    supply_minor  BIGINT      NOT NULL CHECK (supply_minor > 0),
+    currency      CHAR(3)     NOT NULL,
+    chain_status  TEXT        NOT NULL CHECK (chain_status IN ('PENDING', 'ISSUED', 'FROZEN', 'REDEEMED')),
+    transaction_id TEXT       NOT NULL DEFAULT '',
+    explorer_url  TEXT        NOT NULL DEFAULT '',
+    created_at    TIMESTAMPTZ NOT NULL,
+    updated_at    TIMESTAMPTZ NOT NULL
+);
+
+-- An approved invoice is issued once. A retry after a failed issuance must find the asset
+-- that already exists rather than mint a second one.
+CREATE UNIQUE INDEX tokenized_assets_invoice_key ON tokenized_assets (invoice_id);
+CREATE INDEX tokenized_assets_issuer_idx ON tokenized_assets (issuer_id, created_at DESC);
+
 CREATE TABLE auctions (
     id               UUID PRIMARY KEY,
     issuer_id        UUID        NOT NULL REFERENCES organizations (id),
@@ -282,6 +306,7 @@ DROP TABLE IF EXISTS allocations;
 DROP TABLE IF EXISTS bids;
 DROP TABLE IF EXISTS auction_lots;
 DROP TABLE IF EXISTS auctions;
+DROP TABLE IF EXISTS tokenized_assets;
 DROP TABLE IF EXISTS risk_assessments;
 DROP TABLE IF EXISTS market_snapshots;
 DROP TABLE IF EXISTS invoice_documents;

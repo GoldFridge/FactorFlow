@@ -125,6 +125,7 @@ TRUNCATE TABLE
     bids,
     auction_lots,
     auctions,
+    tokenized_assets,
     risk_assessments,
     market_snapshots,
     invoice_documents,

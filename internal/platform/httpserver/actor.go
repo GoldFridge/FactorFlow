@@ -19,6 +19,10 @@ type Actor struct {
 	Wallet         string
 	// Role scopes what the actor may do inside its organization.
 	Role string
+	// Eligible reports whether the organization passed the demo eligibility check. It is
+	// resolved once, when the session is established, so a domain module never has to
+	// reach into the identity module to ask.
+	Eligible bool
 	// Operator marks a platform operator, who may run reconciliation and replay outbox
 	// work but has no access to document plaintext.
 	Operator bool

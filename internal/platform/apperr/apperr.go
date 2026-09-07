@@ -95,3 +95,22 @@ func Forbiddenf(format string, args ...any) error {
 func Unavailablef(format string, args ...any) error {
 	return fmt.Errorf("%w: %s", ErrUnavailable, fmt.Sprintf(format, args...))
 }
+
+// The predicates below name a kind without every caller writing errors.Is. They exist for
+// code that must branch on the kind, such as deciding whether a failure is worth recording
+// against an entity: a rejected command changed nothing, a genuine failure did.
+
+// IsValidation reports whether err is a validation failure.
+func IsValidation(err error) bool { return errors.Is(err, ErrValidation) }
+
+// IsConflict reports whether err is a state or version conflict.
+func IsConflict(err error) bool { return errors.Is(err, ErrConflict) }
+
+// IsNotFound reports whether err is a missing entity.
+func IsNotFound(err error) bool { return errors.Is(err, ErrNotFound) }
+
+// IsForbidden reports whether err is an out-of-scope caller.
+func IsForbidden(err error) bool { return errors.Is(err, ErrForbidden) }
+
+// IsUnavailable reports whether err is an unusable dependency.
+func IsUnavailable(err error) bool { return errors.Is(err, ErrUnavailable) }
