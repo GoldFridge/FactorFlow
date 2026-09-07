@@ -310,6 +310,42 @@ CREATE UNIQUE INDEX settlements_allocation_key ON settlements (auction_id, lot_i
 CREATE UNIQUE INDEX settlements_operation_key ON settlements (operation_id);
 CREATE INDEX settlements_unfinished_idx ON settlements (state, updated_at) WHERE state <> 'ACCOUNTED';
 
+-- One paid request: the quote, the payment that bought it, and the answer it bought.
+--
+-- request_hash binds the exchange to one body and response_hash to one answer, so a
+-- client and the platform can later agree on what was paid for. The payment and the nonce
+-- are unique because spending one payment on two answers is the failure this table exists
+-- to prevent.
+CREATE TABLE x402_requests (
+    id              UUID PRIMARY KEY,
+    endpoint        TEXT        NOT NULL CHECK (length(btrim(endpoint)) > 0),
+    request_hash    TEXT        NOT NULL CHECK (request_hash ~ '^0x[0-9a-f]{64}$'),
+    nonce           TEXT        NOT NULL,
+    idempotency_key TEXT        NOT NULL DEFAULT '',
+    price_minor     BIGINT      NOT NULL CHECK (price_minor > 0),
+    currency        CHAR(3)     NOT NULL,
+    payer           TEXT        NOT NULL DEFAULT '',
+    payment_tx      TEXT        NOT NULL DEFAULT '',
+    response_hash   TEXT        NOT NULL DEFAULT '',
+    response        BYTEA,
+    state           TEXT        NOT NULL CHECK (state IN ('PAYMENT_REQUIRED', 'SIGNED', 'VERIFIED', 'PROCESSED', 'SETTLED', 'REJECTED')),
+    reason          TEXT        NOT NULL DEFAULT '',
+    version         BIGINT      NOT NULL DEFAULT 1 CHECK (version > 0),
+    created_at      TIMESTAMPTZ NOT NULL,
+    updated_at      TIMESTAMPTZ NOT NULL,
+    expires_at      TIMESTAMPTZ NOT NULL
+);
+
+CREATE UNIQUE INDEX x402_requests_nonce_key ON x402_requests (nonce);
+CREATE UNIQUE INDEX x402_requests_payment_key ON x402_requests (payment_tx) WHERE payment_tx <> '';
+
+-- A repeat under the same idempotency key must find the first exchange rather than start
+-- a second one, so the key is unique per endpoint while it is in use.
+CREATE UNIQUE INDEX x402_requests_idempotency_key
+    ON x402_requests (endpoint, idempotency_key)
+    WHERE idempotency_key <> '';
+
+CREATE INDEX x402_requests_expiry_idx ON x402_requests (expires_at) WHERE state = 'PAYMENT_REQUIRED';
 CREATE TABLE audit_events (
     id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     actor       TEXT        NOT NULL,
@@ -362,6 +398,7 @@ CREATE TABLE idempotency_keys (
 DROP TABLE IF EXISTS idempotency_keys;
 DROP TABLE IF EXISTS outbox_events;
 DROP TABLE IF EXISTS audit_events;
+DROP TABLE IF EXISTS x402_requests;
 DROP TABLE IF EXISTS settlements;
 DROP TABLE IF EXISTS allocation_certificates;
 DROP TABLE IF EXISTS allocation_rejections;

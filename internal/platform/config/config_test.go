@@ -37,6 +37,9 @@ func TestLoadFromEnvironment(t *testing.T) {
 	t.Setenv("FF_CRE_ENDPOINT", "https://cre.example")
 	t.Setenv("FF_HEDERA_ACCOUNT_ID", "0.0.1234")
 	t.Setenv("FF_HEDERA_PRIVATE_KEY", "302e...")
+	t.Setenv("FF_PAID_RECIPIENT", "0.0.4402")
+	t.Setenv("FF_PAID_PRICE", "0.50")
+	t.Setenv("FF_PAID_FACILITATOR_URL", "https://facilitator.example")
 
 	cfg, err := config.Load()
 	require.NoError(t, err)
@@ -49,6 +52,20 @@ func TestLoadFromEnvironment(t *testing.T) {
 	assert.True(t, cfg.Providers.CREIsLive())
 	assert.True(t, cfg.Providers.HederaIsLive())
 	assert.False(t, cfg.DemoAuthEnabled(), "a production deployment never trusts the demo header")
+	assert.True(t, cfg.Paid.IsLive())
+	assert.Equal(t, "0.50", cfg.Paid.Price, "a price is carried as a decimal string, never a float")
+	assert.Equal(t, "0.0.4402", cfg.Paid.Recipient)
+}
+
+// TestProductionNeedsSomewhereToBePaid keeps a deployment from charging real money into
+// the placeholder address the in-process facilitator uses.
+func TestProductionNeedsSomewhereToBePaid(t *testing.T) {
+	t.Setenv("FF_ENV", "production")
+	t.Setenv("FF_DATABASE_URL", "postgres://app:secret@db.internal:5432/factorflow")
+
+	_, err := config.Load()
+	require.ErrorIs(t, err, apperr.ErrValidation)
+	assert.Contains(t, err.Error(), "FF_PAID_RECIPIENT")
 }
 
 // TestProductionRefusesDevelopmentDefaults is the check that keeps a demo server from
@@ -98,6 +115,7 @@ func TestSummaryRedactsCredentials(t *testing.T) {
 	t.Setenv("FF_DATABASE_URL", "postgres://app:hunter2@db.internal:5432/factorflow")
 	t.Setenv("FF_GRAPH_API_KEY", "super-secret-key")
 	t.Setenv("FF_GRAPH_GATEWAY_URL", "https://gateway.example")
+	t.Setenv("FF_PAID_RECIPIENT", "0.0.4402")
 
 	cfg, err := config.Load()
 	require.NoError(t, err)

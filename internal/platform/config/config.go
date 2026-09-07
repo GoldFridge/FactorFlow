@@ -52,7 +52,29 @@ type Config struct {
 	// implementation, which is what makes the offline demo work without pretending to be
 	// live.
 	Providers Providers
+
+	// Paid is what the machine endpoints charge and where the money goes.
+	Paid PaidAPI
 }
+
+// PaidAPI configures the x402 endpoints.
+type PaidAPI struct {
+	// Price is what one paid answer costs, as a decimal string with Currency beside it. A
+	// price is never a float: it is quoted to a client's wallet exactly as written.
+	Price    string
+	Currency string
+	// Recipient is the address payments must reach. Without one the endpoints still work
+	// in development against the in-process ledger, which pays a placeholder address.
+	Recipient string
+	// Network and Asset are what the 402 tells a client to pay in.
+	Network string
+	Asset   string
+	// FacilitatorURL is the external verifier. Empty selects the in-process facilitator.
+	FacilitatorURL string
+}
+
+// IsLive reports whether a real facilitator is configured.
+func (p PaidAPI) IsLive() bool { return p.FacilitatorURL != "" }
 
 // Providers holds the credentials and endpoints of the external systems.
 type Providers struct {
@@ -73,6 +95,11 @@ func (p Providers) CREIsLive() bool { return p.CREEndpoint != "" }
 // HederaIsLive reports whether Hedera credentials are configured.
 func (p Providers) HederaIsLive() bool { return p.HederaAccountID != "" && p.HederaPrivateKey != "" }
 
+// developmentPaymentRecipient is the placeholder the in-process facilitator pays to. A
+// deployment that charges real money must set FF_PAID_RECIPIENT, and validate refuses to
+// start production-like without one.
+const developmentPaymentRecipient = "0x0000000000000000000000000000000000000402"
+
 // developmentDatabaseURL is the URL the local compose file serves. A production-like
 // deployment that still carries it has not been configured.
 const developmentDatabaseURL = "postgres://factorflow:factorflow@localhost:5432/factorflow?sslmode=disable"
@@ -91,6 +118,14 @@ func Load() (Config, error) {
 			GraphGatewayURL:  os.Getenv("FF_GRAPH_GATEWAY_URL"),
 			CREEndpoint:      os.Getenv("FF_CRE_ENDPOINT"),
 			LLMAPIKey:        os.Getenv("FF_LLM_API_KEY"),
+		},
+		Paid: PaidAPI{
+			Price:          envOr("FF_PAID_PRICE", "0.25"),
+			Currency:       envOr("FF_PAID_CURRENCY", "USD"),
+			Recipient:      envOr("FF_PAID_RECIPIENT", developmentPaymentRecipient),
+			Network:        envOr("FF_PAID_NETWORK", "local"),
+			Asset:          envOr("FF_PAID_ASSET", "USDC"),
+			FacilitatorURL: os.Getenv("FF_PAID_FACILITATOR_URL"),
 		},
 	}
 
@@ -139,6 +174,12 @@ func (c Config) validate() error {
 			"a %s deployment must not use the development default", c.Env))
 	}
 
+	// Charging real money into a placeholder address would take payments nobody can spend.
+	if c.Env.IsProductionLike() && c.Paid.Recipient == developmentPaymentRecipient {
+		violations = append(violations, apperr.Invalid("FF_PAID_RECIPIENT",
+			"a %s deployment must name the address that receives payments", c.Env))
+	}
+
 	return errors.Join(violations...)
 }
 
@@ -151,12 +192,13 @@ func (c Config) DemoAuthEnabled() bool { return c.Env == Development }
 // Summary renders the configuration for a startup log line, with every secret redacted.
 func (c Config) Summary() string {
 	return fmt.Sprintf(
-		"env=%s addr=%s log=%s database=%s graph=%s cre=%s hedera=%s",
+		"env=%s addr=%s log=%s database=%s graph=%s cre=%s hedera=%s paid=%s",
 		c.Env, c.HTTPAddr, c.LogLevel,
 		redactURL(c.DatabaseURL),
 		liveOrFake(c.Providers.GraphIsLive()),
 		liveOrFake(c.Providers.CREIsLive()),
 		liveOrFake(c.Providers.HederaIsLive()),
+		liveOrFake(c.Paid.IsLive()),
 	)
 }
 

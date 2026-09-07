@@ -119,6 +119,7 @@ TRUNCATE TABLE
     idempotency_keys,
     outbox_events,
     audit_events,
+    x402_requests,
     settlements,
     allocation_certificates,
     allocation_rejections,

@@ -16,6 +16,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/GoldFridge/factorflow/internal/app/agents"
 	"github.com/GoldFridge/factorflow/internal/app/assessment"
 	"github.com/GoldFridge/factorflow/internal/app/issuance"
 	"github.com/GoldFridge/factorflow/internal/app/marketplace"
@@ -26,10 +27,12 @@ import (
 	"github.com/GoldFridge/factorflow/internal/invoice"
 	"github.com/GoldFridge/factorflow/internal/marketdata"
 	"github.com/GoldFridge/factorflow/internal/organization"
+	"github.com/GoldFridge/factorflow/internal/payments"
 	"github.com/GoldFridge/factorflow/internal/platform/audit"
 	"github.com/GoldFridge/factorflow/internal/platform/config"
 	"github.com/GoldFridge/factorflow/internal/platform/httpserver"
 	"github.com/GoldFridge/factorflow/internal/platform/idempotency"
+	"github.com/GoldFridge/factorflow/internal/platform/money"
 	"github.com/GoldFridge/factorflow/internal/platform/outbox"
 	"github.com/GoldFridge/factorflow/internal/platform/postgres"
 	"github.com/GoldFridge/factorflow/internal/risk"
@@ -211,6 +214,27 @@ func wire(cfg config.Config, db *postgres.DB) *application {
 		Now:         now,
 		IDs:         uuid.New,
 	})
+	// The machine-facing endpoints. They read the same published model and stored market as
+	// the rest of the platform, so an agent's quote and an issuer's price cannot disagree.
+	agentService := agents.NewService(agents.Config{
+		DB:        db,
+		Snapshots: snapshots,
+		Auctions:  auctions,
+		Model:     risk.ModelV1(),
+		Market:    marketQuery(cfg),
+		Now:       now,
+	})
+	paidService := payments.NewService(payments.Config{
+		DB:          db,
+		Repo:        payments.NewPostgresRepository(),
+		Facilitator: paymentFacilitator(cfg, now),
+		Network:     cfg.Paid.Network,
+		Recipient:   cfg.Paid.Recipient,
+		Asset:       cfg.Paid.Asset,
+		Now:         now,
+		IDs:         uuid.New,
+	})
+
 	reportingService := reporting.NewService(reporting.Config{
 		DB:          db,
 		Invoices:    invoices,
@@ -226,10 +250,19 @@ func wire(cfg config.Config, db *postgres.DB) *application {
 	marketplaceHandler := marketplace.NewHandler(marketplaceService)
 	onboardingHandler := onboarding.NewHandler(onboardingService)
 	reportingHandler := reporting.NewHandler(reportingService, now)
+	paidHandler := payments.NewHandler(paidService)
+	paidPrice := paidPrice(cfg)
 
 	router := httpserver.NewRouter(httpserver.Dependencies{
 		Version: version,
 		Ready:   db.Ping,
+		// The paid endpoints sit at the root because their path is part of the x402
+		// contract an agent was given, not part of this platform's own versioning.
+		RootRoutes: func(r chi.Router) {
+			r.Post(agents.RouteRiskQuote, paidHandler.Paid(agents.RouteRiskQuote, paidPrice, agentService.RiskQuote))
+			r.Post(agents.RouteRecommendation,
+				paidHandler.Paid(agents.RouteRecommendation, paidPrice, agentService.AuctionRecommendation))
+		},
 		Routes: func(r chi.Router) {
 			r.Use(httpserver.Authenticate(resolver(cfg, identityService, organizations, db)))
 
@@ -288,6 +321,34 @@ func (o organizationWallets) WalletOf(ctx context.Context, q postgres.Querier, o
 		return "", err
 	}
 	return org.Wallet, nil
+}
+
+// paidPrice is what one machine answer costs.
+//
+// A price that will not parse is a configuration mistake, not a runtime condition: the
+// process refuses to charge an amount nobody wrote down, and falls back to the published
+// default rather than to zero.
+func paidPrice(cfg config.Config) money.Amount {
+	currency, err := money.ParseCurrency(cfg.Paid.Currency)
+	if err != nil {
+		slog.Error("FF_PAID_CURRENCY is not a supported currency; using USD", slog.String("value", cfg.Paid.Currency))
+		currency = money.USD
+	}
+
+	price, err := money.Parse(cfg.Paid.Price, currency)
+	if err != nil || !price.IsPositive() {
+		slog.Error("FF_PAID_PRICE is not a positive amount; using 0.25", slog.String("value", cfg.Paid.Price))
+		return money.MustParse("0.25", currency)
+	}
+	return price
+}
+
+// paymentFacilitator picks the live x402 verifier when one is configured.
+func paymentFacilitator(cfg config.Config, now func() time.Time) payments.Facilitator {
+	if cfg.Paid.IsLive() {
+		slog.Warn("an x402 facilitator is configured but the live client is not implemented; using the local one")
+	}
+	return payments.NewLocalFacilitator(cfg.Paid.Recipient, now)
 }
 
 // transferExecutor picks the live chain when Hedera credentials are configured, and the

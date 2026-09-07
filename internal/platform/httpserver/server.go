@@ -39,6 +39,12 @@ type Dependencies struct {
 	// Routes registers the domain endpoints under the API prefix. Keeping this a callback
 	// is what stops this package from importing every domain module.
 	Routes func(r chi.Router)
+	// RootRoutes registers endpoints at the root rather than under the API prefix.
+	//
+	// It exists for interfaces whose path is part of a protocol rather than ours: an x402
+	// agent is told to POST to /paid/v1/..., and burying that under another version prefix
+	// would make the platform's own layout part of a contract with other people's clients.
+	RootRoutes func(r chi.Router)
 }
 
 // NewRouter builds the HTTP router with the middleware every request passes through.
@@ -59,6 +65,9 @@ func NewRouter(deps Dependencies) http.Handler {
 
 	if deps.Routes != nil {
 		router.Route(APIPrefix, deps.Routes)
+	}
+	if deps.RootRoutes != nil {
+		deps.RootRoutes(router)
 	}
 
 	router.NotFound(func(w http.ResponseWriter, r *http.Request) {
