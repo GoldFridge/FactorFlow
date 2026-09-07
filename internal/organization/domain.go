@@ -15,7 +15,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/skimer2king/factorflow/internal/platform/apperr"
+	"github.com/GoldFridge/factorflow/internal/platform/apperr"
 )
 
 // Limits on organization facts.

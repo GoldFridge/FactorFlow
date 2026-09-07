@@ -15,12 +15,12 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/skimer2king/factorflow/internal/invoice"
-	"github.com/skimer2king/factorflow/internal/marketdata"
-	"github.com/skimer2king/factorflow/internal/platform/apperr"
-	"github.com/skimer2king/factorflow/internal/platform/outbox"
-	"github.com/skimer2king/factorflow/internal/platform/postgres"
-	"github.com/skimer2king/factorflow/internal/risk"
+	"github.com/GoldFridge/factorflow/internal/invoice"
+	"github.com/GoldFridge/factorflow/internal/marketdata"
+	"github.com/GoldFridge/factorflow/internal/platform/apperr"
+	"github.com/GoldFridge/factorflow/internal/platform/outbox"
+	"github.com/GoldFridge/factorflow/internal/platform/postgres"
+	"github.com/GoldFridge/factorflow/internal/risk"
 )
 
 // AssessmentWorker performs one confidential assessment end to end: it runs the workflow,

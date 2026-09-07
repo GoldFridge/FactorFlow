@@ -19,7 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const modulePath = "github.com/skimer2king/factorflow"
+const modulePath = "github.com/GoldFridge/factorflow"
 
 // layer names the architectural role of a package.
 type layer int

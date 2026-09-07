@@ -3,7 +3,7 @@ package auction
 import (
 	"sort"
 
-	"github.com/skimer2king/factorflow/internal/platform/money"
+	"github.com/GoldFridge/factorflow/internal/platform/money"
 )
 
 // exposureKey identifies one bid's exposure to one counterparty or grade.

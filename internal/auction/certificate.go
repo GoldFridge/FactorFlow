@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/skimer2king/factorflow/internal/risk"
+	"github.com/GoldFridge/factorflow/internal/risk"
 )
 
 // certificateFormat identifies the canonical serialization. Changing the format changes

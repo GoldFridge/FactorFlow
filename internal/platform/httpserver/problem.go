@@ -14,7 +14,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/skimer2king/factorflow/internal/platform/apperr"
+	"github.com/GoldFridge/factorflow/internal/platform/apperr"
 )
 
 // ProblemContentType is the media type RFC 9457 defines for problem documents.

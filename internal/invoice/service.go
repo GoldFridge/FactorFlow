@@ -6,10 +6,10 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/skimer2king/factorflow/internal/platform/apperr"
-	"github.com/skimer2king/factorflow/internal/platform/money"
-	"github.com/skimer2king/factorflow/internal/platform/outbox"
-	"github.com/skimer2king/factorflow/internal/platform/postgres"
+	"github.com/GoldFridge/factorflow/internal/platform/apperr"
+	"github.com/GoldFridge/factorflow/internal/platform/money"
+	"github.com/GoldFridge/factorflow/internal/platform/outbox"
+	"github.com/GoldFridge/factorflow/internal/platform/postgres"
 )
 
 // Outbox topics this module publishes.

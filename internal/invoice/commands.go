@@ -6,7 +6,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/skimer2king/factorflow/internal/platform/apperr"
+	"github.com/GoldFridge/factorflow/internal/platform/apperr"
 )
 
 // MaxReasonLen bounds a rejection or failure reason. Reasons are operator-facing text and

@@ -21,8 +21,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/skimer2king/factorflow/internal/platform/apperr"
-	"github.com/skimer2king/factorflow/internal/platform/postgres"
+	"github.com/GoldFridge/factorflow/internal/platform/apperr"
+	"github.com/GoldFridge/factorflow/internal/platform/postgres"
 )
 
 // MaxKeyLen bounds the client-supplied key.

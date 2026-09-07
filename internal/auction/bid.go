@@ -6,9 +6,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/skimer2king/factorflow/internal/platform/apperr"
-	"github.com/skimer2king/factorflow/internal/platform/money"
-	"github.com/skimer2king/factorflow/internal/risk"
+	"github.com/GoldFridge/factorflow/internal/platform/apperr"
+	"github.com/GoldFridge/factorflow/internal/platform/money"
+	"github.com/GoldFridge/factorflow/internal/risk"
 )
 
 // Constraint names a rule that can stop a bid from taking a lot. The solver stores the

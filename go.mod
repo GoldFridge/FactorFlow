@@ -1,4 +1,4 @@
-module github.com/skimer2king/factorflow
+module github.com/GoldFridge/factorflow
 
 go 1.26.0
 

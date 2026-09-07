@@ -16,15 +16,15 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/skimer2king/factorflow/internal/app/assessment"
-	"github.com/skimer2king/factorflow/internal/invoice"
-	"github.com/skimer2king/factorflow/internal/marketdata"
-	"github.com/skimer2king/factorflow/internal/platform/config"
-	"github.com/skimer2king/factorflow/internal/platform/httpserver"
-	"github.com/skimer2king/factorflow/internal/platform/idempotency"
-	"github.com/skimer2king/factorflow/internal/platform/outbox"
-	"github.com/skimer2king/factorflow/internal/platform/postgres"
-	"github.com/skimer2king/factorflow/internal/risk"
+	"github.com/GoldFridge/factorflow/internal/app/assessment"
+	"github.com/GoldFridge/factorflow/internal/invoice"
+	"github.com/GoldFridge/factorflow/internal/marketdata"
+	"github.com/GoldFridge/factorflow/internal/platform/config"
+	"github.com/GoldFridge/factorflow/internal/platform/httpserver"
+	"github.com/GoldFridge/factorflow/internal/platform/idempotency"
+	"github.com/GoldFridge/factorflow/internal/platform/outbox"
+	"github.com/GoldFridge/factorflow/internal/platform/postgres"
+	"github.com/GoldFridge/factorflow/internal/risk"
 )
 
 // version is overridden at build time with -ldflags "-X main.version=...".

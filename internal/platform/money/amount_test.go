@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/skimer2king/factorflow/internal/platform/money"
+	"github.com/GoldFridge/factorflow/internal/platform/money"
 )
 
 func TestParse(t *testing.T) {

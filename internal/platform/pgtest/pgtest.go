@@ -20,7 +20,7 @@ import (
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	"github.com/skimer2king/factorflow/internal/platform/postgres"
+	"github.com/GoldFridge/factorflow/internal/platform/postgres"
 )
 
 // image pins the database version so a test failure is never the test environment drifting.

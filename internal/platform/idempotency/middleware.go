@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/skimer2king/factorflow/internal/platform/httpserver"
-	"github.com/skimer2king/factorflow/internal/platform/postgres"
+	"github.com/GoldFridge/factorflow/internal/platform/httpserver"
+	"github.com/GoldFridge/factorflow/internal/platform/postgres"
 )
 
 // HeaderKey is the header carrying the client's idempotency key.

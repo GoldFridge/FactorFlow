@@ -16,7 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/skimer2king/factorflow/internal/platform/apperr"
+	"github.com/GoldFridge/factorflow/internal/platform/apperr"
 )
 
 // PostgreSQL error codes the application reacts to.

@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/skimer2king/factorflow/internal/platform/apperr"
-	"github.com/skimer2king/factorflow/internal/platform/money"
+	"github.com/GoldFridge/factorflow/internal/platform/apperr"
+	"github.com/GoldFridge/factorflow/internal/platform/money"
 )
 
 // DefaultTTL is the demo freshness window for a market snapshot.

@@ -15,8 +15,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/skimer2king/factorflow/internal/invoice"
-	"github.com/skimer2king/factorflow/internal/platform/httpserver"
+	"github.com/GoldFridge/factorflow/internal/invoice"
+	"github.com/GoldFridge/factorflow/internal/platform/httpserver"
 )
 
 // apiFixture wires the handler behind the real router and middleware, so a test exercises

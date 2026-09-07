@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/skimer2king/factorflow/internal/platform/apperr"
+	"github.com/GoldFridge/factorflow/internal/platform/apperr"
 )
 
 // MaxReasonLen bounds a cancellation or failure reason.

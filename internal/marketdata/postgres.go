@@ -9,9 +9,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/shopspring/decimal"
 
-	"github.com/skimer2king/factorflow/internal/platform/apperr"
-	"github.com/skimer2king/factorflow/internal/platform/money"
-	"github.com/skimer2king/factorflow/internal/platform/postgres"
+	"github.com/GoldFridge/factorflow/internal/platform/apperr"
+	"github.com/GoldFridge/factorflow/internal/platform/money"
+	"github.com/GoldFridge/factorflow/internal/platform/postgres"
 )
 
 // Repository stores market snapshots.

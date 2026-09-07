@@ -7,7 +7,7 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 
-	"github.com/skimer2king/factorflow/migrations"
+	"github.com/GoldFridge/factorflow/migrations"
 )
 
 // dialect is fixed: the schema uses PostgreSQL features (partial unique indexes, JSONB,

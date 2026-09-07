@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/skimer2king/factorflow/internal/auction"
+	"github.com/GoldFridge/factorflow/internal/auction"
 )
 
 func TestProfileClear(t *testing.T) {

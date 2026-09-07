@@ -7,7 +7,7 @@ import (
 	"math/rand/v2"
 	"time"
 
-	"github.com/skimer2king/factorflow/internal/platform/postgres"
+	"github.com/GoldFridge/factorflow/internal/platform/postgres"
 )
 
 // Handler performs the external effect an event describes.

@@ -8,9 +8,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/skimer2king/factorflow/internal/auction"
-	"github.com/skimer2king/factorflow/internal/platform/money"
-	"github.com/skimer2king/factorflow/internal/risk"
+	"github.com/GoldFridge/factorflow/internal/auction"
+	"github.com/GoldFridge/factorflow/internal/platform/money"
+	"github.com/GoldFridge/factorflow/internal/risk"
 )
 
 // benchmarkBatch builds the batch size the specification targets: a pool of invoices and a

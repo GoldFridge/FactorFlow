@@ -16,12 +16,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/skimer2king/factorflow/internal/organization"
-	"github.com/skimer2king/factorflow/internal/platform/apperr"
-	"github.com/skimer2king/factorflow/internal/platform/httpserver"
-	"github.com/skimer2king/factorflow/internal/platform/idempotency"
-	"github.com/skimer2king/factorflow/internal/platform/pgtest"
-	"github.com/skimer2king/factorflow/internal/platform/postgres"
+	"github.com/GoldFridge/factorflow/internal/organization"
+	"github.com/GoldFridge/factorflow/internal/platform/apperr"
+	"github.com/GoldFridge/factorflow/internal/platform/httpserver"
+	"github.com/GoldFridge/factorflow/internal/platform/idempotency"
+	"github.com/GoldFridge/factorflow/internal/platform/pgtest"
+	"github.com/GoldFridge/factorflow/internal/platform/postgres"
 )
 
 var testNow = time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)

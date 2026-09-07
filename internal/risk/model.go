@@ -1,8 +1,8 @@
 package risk
 
 import (
-	"github.com/skimer2king/factorflow/internal/platform/apperr"
-	"github.com/skimer2king/factorflow/internal/platform/money"
+	"github.com/GoldFridge/factorflow/internal/platform/apperr"
+	"github.com/GoldFridge/factorflow/internal/platform/money"
 )
 
 // ModelVersionV1 is the published identifier of the coefficients below. Every assessment

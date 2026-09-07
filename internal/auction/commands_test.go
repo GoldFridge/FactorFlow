@@ -7,8 +7,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/skimer2king/factorflow/internal/auction"
-	"github.com/skimer2king/factorflow/internal/platform/apperr"
+	"github.com/GoldFridge/factorflow/internal/auction"
+	"github.com/GoldFridge/factorflow/internal/platform/apperr"
 )
 
 const testCertificate = "0x" + "8c1a5f2e7b3d4906ab5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f901a2b"

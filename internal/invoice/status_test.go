@@ -6,8 +6,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/skimer2king/factorflow/internal/invoice"
-	"github.com/skimer2king/factorflow/internal/platform/apperr"
+	"github.com/GoldFridge/factorflow/internal/invoice"
+	"github.com/GoldFridge/factorflow/internal/platform/apperr"
 )
 
 func TestParseStatus(t *testing.T) {

@@ -19,8 +19,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/skimer2king/factorflow/internal/platform/apperr"
-	"github.com/skimer2king/factorflow/internal/platform/postgres"
+	"github.com/GoldFridge/factorflow/internal/platform/apperr"
+	"github.com/GoldFridge/factorflow/internal/platform/postgres"
 )
 
 // Event is one durable intent to perform an external effect.

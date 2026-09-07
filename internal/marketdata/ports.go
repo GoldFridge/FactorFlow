@@ -5,8 +5,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/skimer2king/factorflow/internal/platform/apperr"
-	"github.com/skimer2king/factorflow/internal/platform/money"
+	"github.com/GoldFridge/factorflow/internal/platform/apperr"
+	"github.com/GoldFridge/factorflow/internal/platform/money"
 )
 
 // Provider fetches standardized lending markets from an external source.

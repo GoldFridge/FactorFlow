@@ -3,7 +3,7 @@ package auction
 import (
 	"fmt"
 
-	"github.com/skimer2king/factorflow/internal/platform/apperr"
+	"github.com/GoldFridge/factorflow/internal/platform/apperr"
 )
 
 // Status is a state of the auction lifecycle defined in the specification:

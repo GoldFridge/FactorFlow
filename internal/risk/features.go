@@ -13,8 +13,8 @@ import (
 
 	"github.com/shopspring/decimal"
 
-	"github.com/skimer2king/factorflow/internal/platform/apperr"
-	"github.com/skimer2king/factorflow/internal/platform/money"
+	"github.com/GoldFridge/factorflow/internal/platform/apperr"
+	"github.com/GoldFridge/factorflow/internal/platform/money"
 )
 
 // FeatureVector is the whitelisted set of risk features the confidential workflow is
