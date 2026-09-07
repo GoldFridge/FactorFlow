@@ -10,6 +10,7 @@ import (
 	"github.com/GoldFridge/factorflow/internal/identity"
 	"github.com/GoldFridge/factorflow/internal/organization"
 	"github.com/GoldFridge/factorflow/internal/platform/apperr"
+	"github.com/GoldFridge/factorflow/internal/platform/audit"
 	"github.com/GoldFridge/factorflow/internal/platform/postgres"
 )
 
@@ -229,4 +230,78 @@ func (r *identityRepo) RevokeSession(_ context.Context, _ postgres.Querier, sess
 
 	s.sessions[session.TokenHash] = *session
 	return nil
+}
+
+// Audit returns the in-memory audit recorder.
+//
+// It is part of the store rather than a separate fake so audit rows obey the same
+// transaction semantics as everything else: a failed unit of work discards its timeline
+// entries too, which is the property the real recorder exists to provide.
+func (s *Store) Audit() *AuditRecorder { return (*AuditRecorder)(s) }
+
+// AuditRecorder records into the store.
+type AuditRecorder Store
+
+func (r *AuditRecorder) store() *Store { return (*Store)(r) }
+
+// Record appends an event, validating it the way the SQL recorder does.
+func (r *AuditRecorder) Record(_ context.Context, _ postgres.Querier, e audit.Event) error {
+	if err := e.Validate(); err != nil {
+		return err
+	}
+
+	s := r.store()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.events = append(s.events, e)
+	return nil
+}
+
+// Timeline returns one entity's events, newest first.
+func (r *AuditRecorder) Timeline(_ context.Context, _ postgres.Querier, entityType, entityID string, limit int) ([]audit.Event, error) {
+	events := r.For(entityType, entityID)
+	if limit > 0 && len(events) > limit {
+		events = events[:limit]
+	}
+	return events, nil
+}
+
+// For returns one entity's events, newest first.
+func (r *AuditRecorder) For(entityType, entityID string) []audit.Event {
+	s := r.store()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	out := make([]audit.Event, 0, len(s.events))
+	for i := len(s.events) - 1; i >= 0; i-- {
+		if s.events[i].EntityType == entityType && s.events[i].EntityID == entityID {
+			out = append(out, s.events[i])
+		}
+	}
+	return out
+}
+
+// Actions returns every recorded action in the order it was recorded.
+func (r *AuditRecorder) Actions() []string {
+	s := r.store()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	out := make([]string, 0, len(s.events))
+	for _, e := range s.events {
+		out = append(out, e.Action)
+	}
+	return out
+}
+
+// Events returns everything recorded, in order.
+func (r *AuditRecorder) Events() []audit.Event {
+	s := r.store()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	out := make([]audit.Event, len(s.events))
+	copy(out, s.events)
+	return out
 }

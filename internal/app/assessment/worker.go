@@ -18,6 +18,7 @@ import (
 	"github.com/GoldFridge/factorflow/internal/invoice"
 	"github.com/GoldFridge/factorflow/internal/marketdata"
 	"github.com/GoldFridge/factorflow/internal/platform/apperr"
+	"github.com/GoldFridge/factorflow/internal/platform/audit"
 	"github.com/GoldFridge/factorflow/internal/platform/outbox"
 	"github.com/GoldFridge/factorflow/internal/platform/postgres"
 	"github.com/GoldFridge/factorflow/internal/risk"
@@ -38,9 +39,13 @@ type AssessmentWorker struct {
 	workflow    risk.Workflow
 	model       risk.Model
 	query       marketdata.Query
+	audit       audit.Recorder
 	now         func() time.Time
 	ids         func() uuid.UUID
 }
+
+// ActionAssessed is the timeline entry for a completed assessment.
+const ActionAssessed = "invoice.assessed"
 
 // TxRunner is the transaction boundary the worker needs.
 type TxRunner interface {
@@ -59,6 +64,7 @@ type WorkerConfig struct {
 	Model       risk.Model
 	// Query is the market question this deployment prices against.
 	Query marketdata.Query
+	Audit audit.Recorder
 	Now   func() time.Time
 	IDs   func() uuid.UUID
 }
@@ -74,6 +80,9 @@ func NewAssessmentWorker(cfg WorkerConfig) *AssessmentWorker {
 	if cfg.Model.Version == "" {
 		cfg.Model = risk.ModelV1()
 	}
+	if cfg.Audit == nil {
+		cfg.Audit = audit.Discard{}
+	}
 
 	return &AssessmentWorker{
 		db:          cfg.DB,
@@ -84,6 +93,7 @@ func NewAssessmentWorker(cfg WorkerConfig) *AssessmentWorker {
 		workflow:    cfg.Workflow,
 		model:       cfg.Model,
 		query:       cfg.Query,
+		audit:       cfg.Audit,
 		now:         cfg.Now,
 		ids:         cfg.IDs,
 	}
@@ -221,7 +231,21 @@ func (w *AssessmentWorker) commit(ctx context.Context, inv *invoice.Invoice, sna
 		if err := inv.CompleteAssessment(assessment.ID, w.now()); err != nil {
 			return err
 		}
-		return w.invoices.Update(ctx, q, inv, expectedVersion)
+		if err := w.invoices.Update(ctx, q, inv, expectedVersion); err != nil {
+			return err
+		}
+
+		// The commitment and the snapshot hash are the two things a reader needs to check
+		// the price later; the features and the score itself stay in the assessment.
+		return w.audit.Record(ctx, q,
+			audit.Of(ctx, audit.SystemActor, ActionAssessed, invoice.EntityType, inv.ID.String(), w.now()).
+				With("assessment_id", assessment.ID.String()).
+				With("model_version", assessment.ModelVersion).
+				With("grade", assessment.Grade.String()).
+				With("market_snapshot_hash", assessment.MarketSnapshotHash).
+				With("confidential_commitment", assessment.ConfidentialCommitment).
+				With("requires_manual_review", assessment.RequiresManualReview).
+				With("status", inv.Status.String()))
 	})
 }
 

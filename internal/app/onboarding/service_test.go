@@ -50,6 +50,7 @@ func newFixture(t *testing.T, autoApprove bool) *fixture {
 		Organizations: store.Organizations(),
 		Challenges:    store.Identity(),
 		Sessions:      f.identity,
+		Audit:         store.Audit(),
 		AutoApprove:   autoApprove,
 		Now:           func() time.Time { return f.clock },
 		IDs:           uuid.New,
@@ -419,4 +420,57 @@ func (f *fixture) do(t *testing.T, method, path, token, body string) *httptest.R
 	rec := httptest.NewRecorder()
 	f.router.ServeHTTP(rec, req)
 	return rec
+}
+
+// TestEligibilityDecisionsAreRecorded is the point of auditing this module: who was let
+// into the market, and on whose say-so, is what a later review asks about.
+func TestEligibilityDecisionsAreRecorded(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t, false)
+	w := wallettest.New(t)
+
+	org, err := f.register(t, w, organization.TypeIssuer, "Northwind Trading")
+	require.NoError(t, err)
+
+	registered := f.store.Audit().For(onboarding.EntityType, org.ID.String())
+	require.Len(t, registered, 1)
+	assert.Equal(t, onboarding.ActionRegistered, registered[0].Action)
+	assert.Equal(t, org.ID.String(), registered[0].Actor, "a wallet registers itself; nobody vouched for it")
+	assert.Equal(t, org.Wallet, registered[0].Detail["wallet"])
+	assert.Equal(t, false, registered[0].Detail["auto_approved"])
+
+	_, err = f.service.Approve(t.Context(), f.actorFor(&f.operator), org.ID)
+	require.NoError(t, err)
+	_, err = f.service.Reject(t.Context(), f.actorFor(&f.operator), org.ID, "documents did not match")
+	require.NoError(t, err)
+
+	events := f.store.Audit().For(onboarding.EntityType, org.ID.String())
+	require.Len(t, events, 3)
+
+	rejected := events[0]
+	assert.Equal(t, onboarding.ActionRejected, rejected.Action)
+	assert.Equal(t, f.operator.ID.String(), rejected.Actor, "the operator who decided is named")
+	assert.Equal(t, "documents did not match", rejected.Detail["reason"])
+	assert.NotEqual(t, rejected.BeforeHash, rejected.AfterHash)
+
+	assert.Equal(t, onboarding.ActionApproved, events[1].Action)
+}
+
+// TestAFailedRegistrationRecordsNothing keeps the timeline from showing a participant that
+// was never created.
+func TestAFailedRegistrationRecordsNothing(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t, false)
+	w := wallettest.New(t)
+
+	_, err := f.register(t, w, organization.TypeIssuer, "Northwind Trading")
+	require.NoError(t, err)
+	before := len(f.store.Audit().Events())
+
+	// The same wallet again: refused by the unique wallet constraint.
+	_, err = f.register(t, w, organization.TypeInvestor, "Northwind Capital")
+	require.ErrorIs(t, err, apperr.ErrConflict)
+	assert.Len(t, f.store.Audit().Events(), before)
 }

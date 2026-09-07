@@ -16,6 +16,7 @@ import (
 	"github.com/GoldFridge/factorflow/internal/invoice"
 	"github.com/GoldFridge/factorflow/internal/marketdata"
 	"github.com/GoldFridge/factorflow/internal/platform/apperr"
+	"github.com/GoldFridge/factorflow/internal/platform/audit"
 	"github.com/GoldFridge/factorflow/internal/platform/httpserver"
 	"github.com/GoldFridge/factorflow/internal/platform/money"
 	"github.com/GoldFridge/factorflow/internal/risk"
@@ -52,6 +53,7 @@ func newFixture(t *testing.T) *fixture {
 		Invoices:    store.Invoices(),
 		Assessments: store.Assessments(),
 		Snapshots:   store.Snapshots(),
+		Timeline:    store.Audit(),
 		Market:      marketdata.DemoQuery(),
 	})
 
@@ -291,4 +293,54 @@ func TestLatestSnapshotWithoutAnyMarketData(t *testing.T) {
 
 	_, _, err := f.service.LatestSnapshot(t.Context(), f.issuer, testNow)
 	require.ErrorIs(t, err, apperr.ErrNotFound)
+}
+
+// TestTimelineIsScopedLikeTheInvoice keeps a receivable's history as private as the
+// receivable, and reports its absence the same way.
+func TestTimelineIsScopedLikeTheInvoice(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+	inv, _, _ := f.assessedInvoice(t, f.issuer.OrganizationID)
+
+	require.NoError(t, f.store.Audit().Record(t.Context(), f.store.Querier(),
+		audit.Of(t.Context(), f.issuer.OrganizationID.String(), invoice.ActionCreated,
+			invoice.EntityType, inv.ID.String(), testNow).
+			With("status", invoice.StatusDraft.String())))
+	require.NoError(t, f.store.Audit().Record(t.Context(), f.store.Querier(),
+		audit.Of(t.Context(), audit.SystemActor, "invoice.assessed",
+			invoice.EntityType, inv.ID.String(), testNow.Add(time.Minute)).
+			With("grade", "B")))
+
+	events, err := f.service.TimelineFor(t.Context(), f.issuer, inv.ID, 0)
+	require.NoError(t, err)
+	require.Len(t, events, 2)
+	assert.Equal(t, "invoice.assessed", events[0].Action, "newest first")
+
+	limited, err := f.service.TimelineFor(t.Context(), f.operator, inv.ID, 1)
+	require.NoError(t, err)
+	assert.Len(t, limited, 1)
+
+	_, err = f.service.TimelineFor(t.Context(), f.stranger, inv.ID, 0)
+	require.ErrorIs(t, err, apperr.ErrNotFound)
+
+	_, err = f.service.TimelineFor(t.Context(), f.issuer, uuid.New(), 0)
+	require.ErrorIs(t, err, apperr.ErrNotFound)
+}
+
+// TestTimelineWithoutARecorder reports honestly rather than answering with an empty
+// history, which would read as "nothing ever happened".
+func TestTimelineWithoutARecorder(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+	inv, _, _ := f.assessedInvoice(t, f.issuer.OrganizationID)
+
+	service := reporting.NewService(reporting.Config{
+		DB: f.store, Invoices: f.store.Invoices(), Assessments: f.store.Assessments(),
+		Snapshots: f.store.Snapshots(), Market: marketdata.DemoQuery(),
+	})
+
+	_, err := service.TimelineFor(t.Context(), f.issuer, inv.ID, 0)
+	require.ErrorIs(t, err, apperr.ErrUnavailable)
 }

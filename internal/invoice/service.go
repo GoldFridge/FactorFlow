@@ -7,9 +7,24 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/GoldFridge/factorflow/internal/platform/apperr"
+	"github.com/GoldFridge/factorflow/internal/platform/audit"
 	"github.com/GoldFridge/factorflow/internal/platform/money"
 	"github.com/GoldFridge/factorflow/internal/platform/outbox"
 	"github.com/GoldFridge/factorflow/internal/platform/postgres"
+)
+
+// EntityType names invoices in the audit timeline.
+const EntityType = "invoice"
+
+// Audit actions this module records.
+const (
+	ActionCreated               = "invoice.created"
+	ActionDocumentAttached      = "invoice.document_attached"
+	ActionAssessmentRequested   = "invoice.assessment_requested"
+	ActionTokenizationRequested = "invoice.tokenization_requested"
+	ActionApproved              = "invoice.approved"
+	ActionRejected              = "invoice.rejected"
+	ActionAuctionOpened         = "invoice.auction_opened"
 )
 
 // Outbox topics this module publishes.
@@ -42,22 +57,51 @@ type Actor struct {
 // composes repository writes with their outbox events, and leaves every state rule to the
 // aggregate.
 type Service struct {
-	db   TxRunner
-	repo Repository
-	now  func() time.Time
-	ids  func() uuid.UUID
+	db    TxRunner
+	repo  Repository
+	audit audit.Recorder
+	now   func() time.Time
+	ids   func() uuid.UUID
 }
 
 // NewService wires the service. The clock and the id source are injected so a test can
 // produce a byte-identical result twice.
-func NewService(db TxRunner, repo Repository, now func() time.Time, ids func() uuid.UUID) *Service {
+func NewService(db TxRunner, repo Repository, recorder audit.Recorder, now func() time.Time, ids func() uuid.UUID) *Service {
 	if now == nil {
 		now = time.Now
 	}
 	if ids == nil {
 		ids = uuid.New
 	}
-	return &Service{db: db, repo: repo, now: now, ids: ids}
+	if recorder == nil {
+		recorder = audit.Discard{}
+	}
+	return &Service{db: db, repo: repo, audit: recorder, now: now, ids: ids}
+}
+
+// auditState is what an audit entry's before and after hashes are taken over: the facts a
+// reader checking the timeline against the record can compare, and nothing about the
+// document behind the invoice.
+func auditState(inv *Invoice) map[string]any {
+	return map[string]any{"status": inv.Status.String(), "version": inv.Version}
+}
+
+// actorRef names the caller in the timeline. Work with no organization behind it is the
+// platform acting on its own, which is what SystemActor means.
+func actorRef(actor Actor) string {
+	if actor.OrganizationID == uuid.Nil {
+		return audit.SystemActor
+	}
+	return actor.OrganizationID.String()
+}
+
+// record appends one timeline entry inside the caller transaction, so the entry and the
+// change it describes commit together or neither does.
+func (s *Service) record(ctx context.Context, q postgres.Querier, actor Actor, action string, inv *Invoice, before map[string]any) error {
+	return s.audit.Record(ctx, q,
+		audit.Of(ctx, actorRef(actor), action, EntityType, inv.ID.String(), s.now()).
+			Between(before, auditState(inv)).
+			With("status", inv.Status.String()))
 }
 
 // CreateParams are the facts an issuer supplies for a new draft.
@@ -89,7 +133,10 @@ func (s *Service) Create(ctx context.Context, actor Actor, p CreateParams) (*Inv
 	}
 
 	if err := s.db.InTx(ctx, func(q postgres.Querier) error {
-		return s.repo.Create(ctx, q, inv)
+		if err := s.repo.Create(ctx, q, inv); err != nil {
+			return err
+		}
+		return s.record(ctx, q, actor, ActionCreated, inv, nil)
 	}); err != nil {
 		return nil, err
 	}
@@ -115,6 +162,7 @@ func (s *Service) AttachDocument(ctx context.Context, actor Actor, invoiceID uui
 			return err
 		}
 
+		before := auditState(inv)
 		expectedVersion := inv.Version
 		if err := inv.MarkUploaded(s.now()); err != nil {
 			return err
@@ -123,6 +171,15 @@ func (s *Service) AttachDocument(ctx context.Context, actor Actor, invoiceID uui
 			return err
 		}
 		if err := s.repo.Update(ctx, q, inv, expectedVersion); err != nil {
+			return err
+		}
+		// The digest is recorded, never the document: the timeline says which ciphertext
+		// was attached without becoming a second copy of it.
+		if err := s.audit.Record(ctx, q,
+			audit.Of(ctx, actorRef(actor), ActionDocumentAttached, EntityType, inv.ID.String(), s.now()).
+				Between(before, auditState(inv)).
+				With("status", inv.Status.String()).
+				With("cipher_hash", doc.CipherHash)); err != nil {
 			return err
 		}
 
@@ -166,11 +223,15 @@ func (s *Service) RequestAssessment(ctx context.Context, actor Actor, invoiceID 
 			return err
 		}
 
+		before := auditState(inv)
 		expectedVersion := inv.Version
 		if err := inv.StartAssessment(s.now()); err != nil {
 			return err
 		}
 		if err := s.repo.Update(ctx, q, inv, expectedVersion); err != nil {
+			return err
+		}
+		if err := s.record(ctx, q, actor, ActionAssessmentRequested, inv, before); err != nil {
 			return err
 		}
 
@@ -214,11 +275,15 @@ func (s *Service) RequestTokenization(ctx context.Context, actor Actor, invoiceI
 			return err
 		}
 
+		before := auditState(inv)
 		expectedVersion := inv.Version
 		if err := inv.StartTokenization(s.now()); err != nil {
 			return err
 		}
 		if err := s.repo.Update(ctx, q, inv, expectedVersion); err != nil {
+			return err
+		}
+		if err := s.record(ctx, q, actor, ActionTokenizationRequested, inv, before); err != nil {
 			return err
 		}
 
@@ -241,11 +306,15 @@ func (s *Service) RequestTokenization(ctx context.Context, actor Actor, invoiceI
 // OpenAuction moves a tokenized invoice into an open auction. It is called by the
 // application layer once the batch itself exists.
 func (s *Service) OpenAuction(ctx context.Context, q postgres.Querier, inv *Invoice) error {
+	before := auditState(inv)
 	expectedVersion := inv.Version
 	if err := inv.OpenAuction(s.now()); err != nil {
 		return err
 	}
-	return s.repo.Update(ctx, q, inv, expectedVersion)
+	if err := s.repo.Update(ctx, q, inv, expectedVersion); err != nil {
+		return err
+	}
+	return s.record(ctx, q, Actor{OrganizationID: inv.IssuerID}, ActionAuctionOpened, inv, before)
 }
 
 // LoadForAuction returns an invoice the caller may offer, inside the caller's transaction.
@@ -255,14 +324,14 @@ func (s *Service) LoadForAuction(ctx context.Context, q postgres.Querier, actor 
 
 // Approve records the issuer confirming the extracted facts.
 func (s *Service) Approve(ctx context.Context, actor Actor, invoiceID uuid.UUID) (*Invoice, error) {
-	return s.mutate(ctx, actor, invoiceID, func(inv *Invoice) error {
+	return s.mutate(ctx, actor, invoiceID, ActionApproved, func(inv *Invoice) error {
 		return inv.Approve(s.now())
 	})
 }
 
 // Reject ends the lifecycle before tokenization.
 func (s *Service) Reject(ctx context.Context, actor Actor, invoiceID uuid.UUID, reason string) (*Invoice, error) {
-	return s.mutate(ctx, actor, invoiceID, func(inv *Invoice) error {
+	return s.mutate(ctx, actor, invoiceID, ActionRejected, func(inv *Invoice) error {
 		return inv.Reject(reason, s.now())
 	})
 }
@@ -297,7 +366,7 @@ func (s *Service) List(ctx context.Context, actor Actor, limit int) ([]*Invoice,
 }
 
 // mutate loads, applies a command, and stores the result under the version it read.
-func (s *Service) mutate(ctx context.Context, actor Actor, invoiceID uuid.UUID, apply func(*Invoice) error) (*Invoice, error) {
+func (s *Service) mutate(ctx context.Context, actor Actor, invoiceID uuid.UUID, action string, apply func(*Invoice) error) (*Invoice, error) {
 	var updated *Invoice
 
 	err := s.db.InTx(ctx, func(q postgres.Querier) error {
@@ -306,11 +375,15 @@ func (s *Service) mutate(ctx context.Context, actor Actor, invoiceID uuid.UUID, 
 			return err
 		}
 
+		before := auditState(inv)
 		expectedVersion := inv.Version
 		if err := apply(inv); err != nil {
 			return err
 		}
 		if err := s.repo.Update(ctx, q, inv, expectedVersion); err != nil {
+			return err
+		}
+		if err := s.record(ctx, q, actor, action, inv, before); err != nil {
 			return err
 		}
 

@@ -14,7 +14,19 @@ import (
 	"github.com/GoldFridge/factorflow/internal/identity"
 	"github.com/GoldFridge/factorflow/internal/organization"
 	"github.com/GoldFridge/factorflow/internal/platform/apperr"
+	"github.com/GoldFridge/factorflow/internal/platform/audit"
 	"github.com/GoldFridge/factorflow/internal/platform/postgres"
+)
+
+// EntityType names organizations in the audit timeline.
+const EntityType = "organization"
+
+// Audit actions this service records. Who was let into the market, and on whose say-so, is
+// exactly the question an eligibility review asks afterwards.
+const (
+	ActionRegistered = "organization.registered"
+	ActionApproved   = "organization.approved"
+	ActionRejected   = "organization.rejected"
 )
 
 // TxRunner is the transaction boundary the service needs.
@@ -35,6 +47,7 @@ type Service struct {
 	organizations organization.Repository
 	challenges    identity.Repository
 	sessions      *identity.Service
+	audit         audit.Recorder
 	now           func() time.Time
 	ids           func() uuid.UUID
 
@@ -50,6 +63,7 @@ type Config struct {
 	Organizations organization.Repository
 	Challenges    identity.Repository
 	Sessions      *identity.Service
+	Audit         audit.Recorder
 	AutoApprove   bool
 	Now           func() time.Time
 	IDs           func() uuid.UUID
@@ -63,11 +77,15 @@ func NewService(cfg Config) *Service {
 	if cfg.IDs == nil {
 		cfg.IDs = uuid.New
 	}
+	if cfg.Audit == nil {
+		cfg.Audit = audit.Discard{}
+	}
 	return &Service{
 		db:            cfg.DB,
 		organizations: cfg.Organizations,
 		challenges:    cfg.Challenges,
 		sessions:      cfg.Sessions,
+		audit:         cfg.Audit,
 		now:           cfg.Now,
 		ids:           cfg.IDs,
 		autoApprove:   cfg.AutoApprove,
@@ -131,6 +149,15 @@ func (s *Service) Register(ctx context.Context, p RegisterParams) (*organization
 		if err := s.organizations.Create(ctx, q, org); err != nil {
 			return err
 		}
+		// The wallet registered itself, so it is its own actor: nobody else vouched for it.
+		if err := s.audit.Record(ctx, q,
+			audit.Of(ctx, org.ID.String(), ActionRegistered, EntityType, org.ID.String(), s.now()).
+				Between(nil, auditState(org)).
+				With("type", org.Type.String()).
+				With("wallet", org.Wallet).
+				With("auto_approved", s.autoApprove)); err != nil {
+			return err
+		}
 
 		created = org
 		return nil
@@ -161,9 +188,14 @@ func (s *Service) List(ctx context.Context, actor Actor, orgType organization.Ty
 	return s.organizations.List(ctx, s.db.Querier(), orgType, limit)
 }
 
+// auditState is what an eligibility entry's hashes are taken over.
+func auditState(org *organization.Organization) map[string]any {
+	return map[string]any{"eligibility": org.Eligibility.String(), "version": org.Version}
+}
+
 // Approve records a passed demo eligibility check.
 func (s *Service) Approve(ctx context.Context, actor Actor, id uuid.UUID) (*organization.Organization, error) {
-	return s.decide(ctx, actor, id, func(org *organization.Organization) error {
+	return s.decide(ctx, actor, id, ActionApproved, func(org *organization.Organization) error {
 		return org.Approve(s.now())
 	})
 }
@@ -171,12 +203,12 @@ func (s *Service) Approve(ctx context.Context, actor Actor, id uuid.UUID) (*orga
 // Reject records a failed demo eligibility check, which also takes an already eligible
 // organization out of the market.
 func (s *Service) Reject(ctx context.Context, actor Actor, id uuid.UUID, reason string) (*organization.Organization, error) {
-	return s.decide(ctx, actor, id, func(org *organization.Organization) error {
+	return s.decide(ctx, actor, id, ActionRejected, func(org *organization.Organization) error {
 		return org.Reject(reason, s.now())
 	})
 }
 
-func (s *Service) decide(ctx context.Context, actor Actor, id uuid.UUID, apply func(*organization.Organization) error) (*organization.Organization, error) {
+func (s *Service) decide(ctx context.Context, actor Actor, id uuid.UUID, action string, apply func(*organization.Organization) error) (*organization.Organization, error) {
 	if !actor.Operator {
 		return nil, apperr.Forbiddenf("an eligibility decision requires a platform operator")
 	}
@@ -188,11 +220,21 @@ func (s *Service) decide(ctx context.Context, actor Actor, id uuid.UUID, apply f
 			return err
 		}
 
+		before := auditState(org)
 		expectedVersion := org.Version
 		if err := apply(org); err != nil {
 			return err
 		}
 		if err := s.organizations.Update(ctx, q, org, expectedVersion); err != nil {
+			return err
+		}
+		// The operator who decided is the actor: an eligibility decision with nobody
+		// behind it is not a decision anyone can review.
+		if err := s.audit.Record(ctx, q,
+			audit.Of(ctx, actor.OrganizationID.String(), action, EntityType, org.ID.String(), s.now()).
+				Between(before, auditState(org)).
+				With("eligibility", org.Eligibility.String()).
+				With("reason", org.Reason)); err != nil {
 			return err
 		}
 

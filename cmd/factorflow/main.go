@@ -26,6 +26,7 @@ import (
 	"github.com/GoldFridge/factorflow/internal/invoice"
 	"github.com/GoldFridge/factorflow/internal/marketdata"
 	"github.com/GoldFridge/factorflow/internal/organization"
+	"github.com/GoldFridge/factorflow/internal/platform/audit"
 	"github.com/GoldFridge/factorflow/internal/platform/config"
 	"github.com/GoldFridge/factorflow/internal/platform/httpserver"
 	"github.com/GoldFridge/factorflow/internal/platform/idempotency"
@@ -136,11 +137,14 @@ func wire(cfg config.Config, db *postgres.DB) *application {
 	assets := tokenization.NewPostgresRepository()
 	auctions := auction.NewPostgresRepository()
 	organizations := organization.NewPostgresRepository()
+	// One recorder is shared by every module: an audit trail split across several writers
+	// is several timelines that can disagree.
+	trail := audit.NewPostgresRecorder()
 
 	market := marketdata.NewService(marketProvider(cfg), marketdata.NewNormalizer(), now)
 
-	invoiceService := invoice.NewService(db, invoices, now, uuid.New)
-	auctionService := auction.NewService(db, auctions, auction.NewSolver(), now, uuid.New)
+	invoiceService := invoice.NewService(db, invoices, trail, now, uuid.New)
+	auctionService := auction.NewService(db, auctions, auction.NewSolver(), trail, now, uuid.New)
 	marketplaceService := marketplace.NewService(marketplace.Config{
 		DB:          db,
 		Invoices:    invoices,
@@ -148,6 +152,7 @@ func wire(cfg config.Config, db *postgres.DB) *application {
 		Assets:      assets,
 		Auctions:    auctions,
 		Solver:      auction.NewSolver(),
+		Audit:       trail,
 		Now:         now,
 		IDs:         uuid.New,
 	})
@@ -161,6 +166,7 @@ func wire(cfg config.Config, db *postgres.DB) *application {
 		Workflow:    confidentialWorkflow(cfg),
 		Model:       risk.ModelV1(),
 		Query:       marketQuery(cfg),
+		Audit:       trail,
 		Now:         now,
 		IDs:         uuid.New,
 	})
@@ -171,6 +177,7 @@ func wire(cfg config.Config, db *postgres.DB) *application {
 		Assets:      assets,
 		Wallets:     organizationWallets{repo: organizations},
 		Issuer:      assetIssuer(cfg),
+		Audit:       trail,
 		Now:         now,
 		IDs:         uuid.New,
 	})
@@ -188,6 +195,7 @@ func wire(cfg config.Config, db *postgres.DB) *application {
 		Organizations: organizations,
 		Challenges:    identity.NewPostgresRepository(),
 		Sessions:      identityService,
+		Audit:         trail,
 		// A demo has nobody to approve the first participant, so development grants
 		// eligibility on registration. Anywhere else it is an operator's decision.
 		AutoApprove: cfg.DemoAuthEnabled(),
@@ -199,6 +207,7 @@ func wire(cfg config.Config, db *postgres.DB) *application {
 		Invoices:    invoices,
 		Assessments: assessments,
 		Snapshots:   snapshots,
+		Timeline:    trail,
 		Market:      marketQuery(cfg),
 	})
 

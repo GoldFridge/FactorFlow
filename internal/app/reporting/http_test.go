@@ -11,6 +11,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/GoldFridge/factorflow/internal/invoice"
+	"github.com/GoldFridge/factorflow/internal/platform/audit"
+	"github.com/GoldFridge/factorflow/internal/platform/httpserver"
 	"github.com/GoldFridge/factorflow/internal/risk"
 )
 
@@ -153,4 +156,41 @@ func TestBenchmarkEndpointWithoutMarketData(t *testing.T) {
 	f := newFixture(t)
 
 	assert.Equal(t, http.StatusNotFound, f.get(t, "/api/v1/market/benchmarks/latest", "issuer").Code)
+}
+
+func TestTimelineEndpoint(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+	inv, _, _ := f.assessedInvoice(t, f.issuer.OrganizationID)
+
+	require.NoError(t, f.store.Audit().Record(t.Context(), f.store.Querier(),
+		audit.Of(httpserver.ContextWithTraceID(t.Context(), "trace-4711"),
+			f.issuer.OrganizationID.String(), invoice.ActionApproved,
+			invoice.EntityType, inv.ID.String(), testNow).
+			Between(map[string]any{"status": "ASSESSED"}, map[string]any{"status": "APPROVED"}).
+			With("status", "APPROVED")))
+
+	rec := f.get(t, "/api/v1/invoices/"+inv.ID.String()+"/timeline", "issuer")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	items := decode(t, rec)["items"].([]any)
+	require.Len(t, items, 1)
+
+	entry := items[0].(map[string]any)
+	assert.Equal(t, invoice.ActionApproved, entry["action"])
+	assert.Equal(t, f.issuer.OrganizationID.String(), entry["actor"])
+	assert.Equal(t, "trace-4711", entry["trace_id"], "an entry can be lined up with its request")
+	assert.NotEqual(t, entry["before_hash"], entry["after_hash"])
+	assert.Equal(t, "APPROVED", entry["detail"].(map[string]any)["status"])
+
+	// Same scoping as every other view of an invoice.
+	assert.Equal(t, http.StatusNotFound,
+		f.get(t, "/api/v1/invoices/"+inv.ID.String()+"/timeline", "stranger").Code)
+	assert.Equal(t, http.StatusOK,
+		f.get(t, "/api/v1/invoices/"+inv.ID.String()+"/timeline", "operator").Code)
+	assert.Equal(t, http.StatusUnprocessableEntity,
+		f.get(t, "/api/v1/invoices/"+inv.ID.String()+"/timeline?limit=0", "issuer").Code)
+	assert.Equal(t, http.StatusUnprocessableEntity,
+		f.get(t, "/api/v1/invoices/not-a-uuid/timeline", "issuer").Code)
 }

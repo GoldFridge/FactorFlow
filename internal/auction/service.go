@@ -7,9 +7,24 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/GoldFridge/factorflow/internal/platform/apperr"
+	"github.com/GoldFridge/factorflow/internal/platform/audit"
 	"github.com/GoldFridge/factorflow/internal/platform/money"
 	"github.com/GoldFridge/factorflow/internal/platform/postgres"
 	"github.com/GoldFridge/factorflow/internal/risk"
+)
+
+// Entity types this module contributes to the audit timeline.
+const (
+	EntityType    = "auction"
+	EntityTypeBid = "bid"
+)
+
+// Audit actions this module records.
+const (
+	ActionCreated      = "auction.created"
+	ActionOpened       = "auction.opened"
+	ActionBidPlaced    = "auction.bid_placed"
+	ActionBidWithdrawn = "auction.bid_withdrawn"
 )
 
 // TxRunner is the transaction boundary the service needs.
@@ -41,12 +56,13 @@ type Service struct {
 	db     TxRunner
 	repo   Repository
 	solver *Solver
+	audit  audit.Recorder
 	now    func() time.Time
 	ids    func() uuid.UUID
 }
 
 // NewService wires the service.
-func NewService(db TxRunner, repo Repository, solver *Solver, now func() time.Time, ids func() uuid.UUID) *Service {
+func NewService(db TxRunner, repo Repository, solver *Solver, recorder audit.Recorder, now func() time.Time, ids func() uuid.UUID) *Service {
 	if now == nil {
 		now = time.Now
 	}
@@ -56,7 +72,26 @@ func NewService(db TxRunner, repo Repository, solver *Solver, now func() time.Ti
 	if solver == nil {
 		solver = NewSolver()
 	}
-	return &Service{db: db, repo: repo, solver: solver, now: now, ids: ids}
+	if recorder == nil {
+		recorder = audit.Discard{}
+	}
+	return &Service{db: db, repo: repo, solver: solver, audit: recorder, now: now, ids: ids}
+}
+
+// auditState is what an audit entry's hashes are taken over. A bid's terms are not in it:
+// the timeline records that a bid was placed, not what price its investor was willing to
+// pay, which is exactly the information a competitor would want.
+func auditState(a *Auction) map[string]any {
+	return map[string]any{"status": a.Status.String(), "version": a.Version}
+}
+
+// actorRef names the caller in the timeline. An operator acting on someone else is still
+// the operator, so the id recorded is whoever made the request.
+func actorRef(actor Actor) string {
+	if actor.OrganizationID == uuid.Nil {
+		return audit.SystemActor
+	}
+	return actor.OrganizationID.String()
 }
 
 // CreateParams carries the batch an issuer offers.
@@ -95,7 +130,14 @@ func (s *Service) Create(ctx context.Context, actor Actor, p CreateParams) (*Auc
 	}
 
 	if err := s.db.InTx(ctx, func(q postgres.Querier) error {
-		return s.repo.CreateAuction(ctx, q, a)
+		if err := s.repo.CreateAuction(ctx, q, a); err != nil {
+			return err
+		}
+		return s.audit.Record(ctx, q,
+			audit.Of(ctx, actor.OrganizationID.String(), ActionCreated, EntityType, a.ID.String(), s.now()).
+				Between(nil, auditState(a)).
+				With("lots", len(a.Lots)).
+				With("status", a.Status.String()))
 	}); err != nil {
 		return nil, err
 	}
@@ -104,7 +146,7 @@ func (s *Service) Create(ctx context.Context, actor Actor, p CreateParams) (*Auc
 
 // Open starts accepting bids.
 func (s *Service) Open(ctx context.Context, actor Actor, auctionID uuid.UUID) (*Auction, error) {
-	return s.mutate(ctx, actor, auctionID, func(a *Auction) error {
+	return s.mutate(ctx, actor, auctionID, ActionOpened, func(a *Auction) error {
 		return a.Open(s.now())
 	})
 }
@@ -168,6 +210,12 @@ func (s *Service) PlaceBid(ctx context.Context, actor Actor, auctionID uuid.UUID
 		if err := s.repo.CreateBid(ctx, q, bid); err != nil {
 			return err
 		}
+		if err := s.audit.Record(ctx, q,
+			audit.Of(ctx, actor.OrganizationID.String(), ActionBidPlaced, EntityTypeBid, bid.ID.String(), s.now()).
+				With("auction_id", a.ID.String())); err != nil {
+			return err
+		}
+
 		created = bid
 		return nil
 	})
@@ -206,6 +254,12 @@ func (s *Service) CancelBid(ctx context.Context, actor Actor, bidID uuid.UUID) (
 		if err := s.repo.UpdateBid(ctx, q, bid, expectedVersion); err != nil {
 			return err
 		}
+		if err := s.audit.Record(ctx, q,
+			audit.Of(ctx, actorRef(actor), ActionBidWithdrawn, EntityTypeBid, bid.ID.String(), s.now()).
+				With("auction_id", a.ID.String())); err != nil {
+			return err
+		}
+
 		updated = bid
 		return nil
 	})
@@ -271,7 +325,7 @@ func (s *Service) Solution(ctx context.Context, actor Actor, auctionID uuid.UUID
 }
 
 // mutate loads an auction, applies an issuer command and stores the result.
-func (s *Service) mutate(ctx context.Context, actor Actor, auctionID uuid.UUID, apply func(*Auction) error) (*Auction, error) {
+func (s *Service) mutate(ctx context.Context, actor Actor, auctionID uuid.UUID, action string, apply func(*Auction) error) (*Auction, error) {
 	var updated *Auction
 
 	err := s.db.InTx(ctx, func(q postgres.Querier) error {
@@ -280,11 +334,18 @@ func (s *Service) mutate(ctx context.Context, actor Actor, auctionID uuid.UUID, 
 			return err
 		}
 
+		before := auditState(a)
 		expectedVersion := a.Version
 		if err := apply(a); err != nil {
 			return err
 		}
 		if err := s.repo.UpdateAuction(ctx, q, a, expectedVersion); err != nil {
+			return err
+		}
+		if err := s.audit.Record(ctx, q,
+			audit.Of(ctx, actorRef(actor), action, EntityType, a.ID.String(), s.now()).
+				Between(before, auditState(a)).
+				With("status", a.Status.String())); err != nil {
 			return err
 		}
 

@@ -2,6 +2,7 @@ package reporting
 
 import (
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -30,6 +31,7 @@ func NewHandler(service *Service, now func() time.Time) *Handler {
 // Routes registers the endpoints.
 func (h *Handler) Routes(r chi.Router) {
 	r.Get("/invoices/{invoiceID}/assessment", h.assessment)
+	r.Get("/invoices/{invoiceID}/timeline", h.timeline)
 	r.Get("/market/benchmarks/latest", h.benchmark)
 }
 
@@ -121,6 +123,67 @@ func (h *Handler) assessment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpserver.WriteJSON(w, r, http.StatusOK, h.toAssessmentResponse(report))
+}
+
+// eventResponse is one entry of the audit timeline.
+type eventResponse struct {
+	Actor      string         `json:"actor"`
+	Action     string         `json:"action"`
+	EntityType string         `json:"entity_type"`
+	EntityID   string         `json:"entity_id"`
+	BeforeHash string         `json:"before_hash,omitempty"`
+	AfterHash  string         `json:"after_hash,omitempty"`
+	TraceID    string         `json:"trace_id,omitempty"`
+	Detail     map[string]any `json:"detail"`
+	OccurredAt string         `json:"occurred_at"`
+}
+
+type timelineResponse struct {
+	Items []eventResponse `json:"items"`
+}
+
+func (h *Handler) timeline(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "invoiceID"))
+	if err != nil {
+		httpserver.WriteProblem(w, r, apperr.Invalid("invoice_id", "must be a UUID"))
+		return
+	}
+
+	limit := 100
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 {
+			httpserver.WriteProblem(w, r, apperr.Invalid("limit", "must be a positive integer"))
+			return
+		}
+		limit = parsed
+	}
+
+	events, err := h.service.TimelineFor(r.Context(), actorOf(r), id, limit)
+	if err != nil {
+		httpserver.WriteProblem(w, r, err)
+		return
+	}
+
+	items := make([]eventResponse, 0, len(events))
+	for _, e := range events {
+		detail := e.Detail
+		if detail == nil {
+			detail = map[string]any{}
+		}
+		items = append(items, eventResponse{
+			Actor:      e.Actor,
+			Action:     e.Action,
+			EntityType: e.EntityType,
+			EntityID:   e.EntityID,
+			BeforeHash: e.BeforeHash,
+			AfterHash:  e.AfterHash,
+			TraceID:    e.TraceID,
+			Detail:     detail,
+			OccurredAt: e.OccurredAt.Format(time.RFC3339),
+		})
+	}
+	httpserver.WriteJSON(w, r, http.StatusOK, timelineResponse{Items: items})
 }
 
 func (h *Handler) benchmark(w http.ResponseWriter, r *http.Request) {

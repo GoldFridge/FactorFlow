@@ -14,6 +14,7 @@ import (
 	"github.com/GoldFridge/factorflow/internal/invoice"
 	"github.com/GoldFridge/factorflow/internal/marketdata"
 	"github.com/GoldFridge/factorflow/internal/platform/apperr"
+	"github.com/GoldFridge/factorflow/internal/platform/audit"
 	"github.com/GoldFridge/factorflow/internal/platform/postgres"
 	"github.com/GoldFridge/factorflow/internal/risk"
 )
@@ -35,6 +36,7 @@ type Service struct {
 	invoices    invoice.Repository
 	assessments risk.Repository
 	snapshots   marketdata.Repository
+	timeline    audit.Reader
 	market      marketdata.Query
 }
 
@@ -44,6 +46,9 @@ type Config struct {
 	Invoices    invoice.Repository
 	Assessments risk.Repository
 	Snapshots   marketdata.Repository
+	// Timeline reads the audit trail back. It is optional: a deployment without one still
+	// answers every other question, it just cannot show the history.
+	Timeline audit.Reader
 	// Market names the question this deployment prices against, so the latest snapshot can
 	// be found without the caller knowing how it was taken.
 	Market marketdata.Query
@@ -56,6 +61,7 @@ func NewService(cfg Config) *Service {
 		invoices:    cfg.Invoices,
 		assessments: cfg.Assessments,
 		snapshots:   cfg.Snapshots,
+		timeline:    cfg.Timeline,
 		market:      cfg.Market,
 	}
 }
@@ -100,6 +106,29 @@ func (s *Service) AssessmentFor(ctx context.Context, actor Actor, invoiceID uuid
 	}
 
 	return report, nil
+}
+
+// TimelineFor returns what was recorded about an invoice, newest first.
+//
+// The scope is the same as the assessment's: an invoice's history is as private as the
+// invoice, so a stranger is told it does not exist rather than that they may not look.
+func (s *Service) TimelineFor(ctx context.Context, actor Actor, invoiceID uuid.UUID, limit int) ([]audit.Event, error) {
+	if s.timeline == nil {
+		return nil, apperr.Unavailablef("this deployment does not keep an audit timeline")
+	}
+	if limit < 0 {
+		return nil, apperr.Invalid("limit", "must not be negative")
+	}
+
+	inv, err := s.invoices.Get(ctx, s.db.Querier(), invoiceID)
+	if err != nil {
+		return nil, err
+	}
+	if !actor.Operator && inv.IssuerID != actor.OrganizationID {
+		return nil, apperr.NotFoundf("invoice %s", invoiceID)
+	}
+
+	return s.timeline.Timeline(ctx, s.db.Querier(), invoice.EntityType, inv.ID.String(), limit)
 }
 
 // LatestSnapshot returns the market observation the next price will be computed from.

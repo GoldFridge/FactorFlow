@@ -13,6 +13,7 @@ import (
 	"github.com/GoldFridge/factorflow/internal/platform/apperr"
 	"github.com/GoldFridge/factorflow/internal/platform/money"
 	"github.com/GoldFridge/factorflow/internal/risk"
+	"github.com/GoldFridge/factorflow/internal/testsupport/audittest"
 )
 
 // serviceFixture wires the service over the in-memory repository with a controllable clock.
@@ -20,6 +21,7 @@ type serviceFixture struct {
 	service  *auction.Service
 	repo     *memRepository
 	db       *fakeDB
+	trail    *audittest.Recorder
 	issuer   auction.Actor
 	investor auction.Actor
 	other    auction.Actor
@@ -33,12 +35,13 @@ func newServiceFixture(t *testing.T) *serviceFixture {
 	f := &serviceFixture{
 		repo:     repo,
 		db:       &fakeDB{repo: repo},
+		trail:    audittest.New(),
 		issuer:   auction.Actor{OrganizationID: issuerA(), Eligible: true},
 		investor: auction.Actor{OrganizationID: seqUUID(0x70, 1), Eligible: true},
 		other:    auction.Actor{OrganizationID: seqUUID(0x70, 2), Eligible: true},
 		clock:    testNow,
 	}
-	f.service = auction.NewService(f.db, repo, auction.NewSolver(), func() time.Time { return f.clock }, uuid.New)
+	f.service = auction.NewService(f.db, repo, auction.NewSolver(), f.trail, func() time.Time { return f.clock }, uuid.New)
 	return f
 }
 
@@ -280,4 +283,57 @@ func TestUnknownAuctionAndBid(t *testing.T) {
 
 	_, err = f.service.Solution(ctx, f.investor, uuid.New())
 	require.ErrorIs(t, err, apperr.ErrNotFound)
+}
+
+// TestBiddingIsRecordedWithoutItsTerms is the shape of an audit entry for a competitive
+// action: it says a bid was placed and by whom, and not what price the investor named.
+func TestBiddingIsRecordedWithoutItsTerms(t *testing.T) {
+	t.Parallel()
+
+	f := newServiceFixture(t)
+	ctx := t.Context()
+
+	a, err := f.service.Create(ctx, f.issuer, f.createParams())
+	require.NoError(t, err)
+	_, err = f.service.Open(ctx, f.issuer, a.ID)
+	require.NoError(t, err)
+
+	f.clock = testOpens.Add(time.Minute)
+	bid, err := f.service.PlaceBid(ctx, f.investor, a.ID, f.bidParams())
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{
+		auction.ActionCreated,
+		auction.ActionOpened,
+		auction.ActionBidPlaced,
+	}, f.trail.Actions())
+
+	events := f.trail.For(auction.EntityTypeBid, bid.ID.String())
+	require.Len(t, events, 1)
+	assert.Equal(t, f.investor.OrganizationID.String(), events[0].Actor)
+	assert.Equal(t, a.ID.String(), events[0].Detail["auction_id"])
+	assert.NotContains(t, events[0].Detail, "min_yield", "a competitor must not read the terms")
+	assert.NotContains(t, events[0].Detail, "budget")
+
+	_, err = f.service.CancelBid(ctx, f.investor, bid.ID)
+	require.NoError(t, err)
+	assert.Equal(t, auction.ActionBidWithdrawn, f.trail.For(auction.EntityTypeBid, bid.ID.String())[0].Action)
+}
+
+// TestARefusedBidRecordsNothing keeps rejected attempts off the timeline: an entry for
+// every refused request would turn the trail into a log rather than a record of what
+// happened.
+func TestARefusedBidRecordsNothing(t *testing.T) {
+	t.Parallel()
+
+	f := newServiceFixture(t)
+	ctx := t.Context()
+
+	a, err := f.service.Create(ctx, f.issuer, f.createParams())
+	require.NoError(t, err)
+	f.trail.Reset()
+
+	_, err = f.service.PlaceBid(ctx, f.investor, a.ID, f.bidParams())
+	require.Error(t, err, "the auction is not open yet")
+	assert.Empty(t, f.trail.Events())
 }

@@ -16,6 +16,7 @@ import (
 	"github.com/GoldFridge/factorflow/internal/auction"
 	"github.com/GoldFridge/factorflow/internal/invoice"
 	"github.com/GoldFridge/factorflow/internal/platform/apperr"
+	"github.com/GoldFridge/factorflow/internal/platform/audit"
 	"github.com/GoldFridge/factorflow/internal/platform/postgres"
 	"github.com/GoldFridge/factorflow/internal/risk"
 	"github.com/GoldFridge/factorflow/internal/tokenization"
@@ -45,8 +46,26 @@ type Service struct {
 	assets      tokenization.Repository
 	auctions    auction.Repository
 	solver      *auction.Solver
+	audit       audit.Recorder
 	now         func() time.Time
 	ids         func() uuid.UUID
+}
+
+// Audit actions this service records. Clearing and cancellation belong here rather than to
+// the auction module, because here is where they happen.
+const (
+	ActionCleared          = "auction.cleared"
+	ActionCancelled        = "auction.cancelled"
+	ActionInvoiceAllocated = "invoice.allocated"
+	ActionInvoiceReleased  = "invoice.auction_released"
+)
+
+// actorRef names the caller in the timeline.
+func actorRef(actor Actor) string {
+	if actor.OrganizationID == uuid.Nil {
+		return audit.SystemActor
+	}
+	return actor.OrganizationID.String()
 }
 
 // Config wires the service.
@@ -57,6 +76,7 @@ type Config struct {
 	Assets      tokenization.Repository
 	Auctions    auction.Repository
 	Solver      *auction.Solver
+	Audit       audit.Recorder
 	Now         func() time.Time
 	IDs         func() uuid.UUID
 }
@@ -72,6 +92,9 @@ func NewService(cfg Config) *Service {
 	if cfg.Solver == nil {
 		cfg.Solver = auction.NewSolver()
 	}
+	if cfg.Audit == nil {
+		cfg.Audit = audit.Discard{}
+	}
 	return &Service{
 		db:          cfg.DB,
 		invoices:    cfg.Invoices,
@@ -79,6 +102,7 @@ func NewService(cfg Config) *Service {
 		assets:      cfg.Assets,
 		auctions:    cfg.Auctions,
 		solver:      cfg.Solver,
+		audit:       cfg.Audit,
 		now:         cfg.Now,
 		ids:         cfg.IDs,
 	}
@@ -147,6 +171,21 @@ func (s *Service) OpenAuction(ctx context.Context, actor Actor, p OpenParams) (*
 			if err := s.invoices.Update(ctx, q, inv, expectedVersion); err != nil {
 				return err
 			}
+			if err := s.audit.Record(ctx, q,
+				audit.Of(ctx, actor.OrganizationID.String(), invoice.ActionAuctionOpened,
+					invoice.EntityType, inv.ID.String(), s.now()).
+					With("auction_id", a.ID.String()).
+					With("status", inv.Status.String())); err != nil {
+				return err
+			}
+		}
+
+		if err := s.audit.Record(ctx, q,
+			audit.Of(ctx, actor.OrganizationID.String(), auction.ActionCreated,
+				auction.EntityType, a.ID.String(), s.now()).
+				With("lots", len(a.Lots)).
+				With("status", a.Status.String())); err != nil {
+			return err
 		}
 
 		created = a
@@ -213,6 +252,18 @@ func (s *Service) ClearAuction(ctx context.Context, actor Actor, auctionID uuid.
 			return err
 		}
 
+		// The certificate hash is the entry that matters: it is what an outside verifier
+		// recomputes to check that this allocation is the one the published solver
+		// produced from these bids.
+		if err := s.audit.Record(ctx, q,
+			audit.Of(ctx, actorRef(actor), ActionCleared, auction.EntityType, a.ID.String(), s.now()).
+				With("certificate_hash", result.CertificateHash).
+				With("solver_version", result.SolverVersion).
+				With("allocations", len(result.Allocations)).
+				With("status", a.Status.String())); err != nil {
+			return err
+		}
+
 		solution = result
 		return nil
 	})
@@ -248,6 +299,12 @@ func (s *Service) CancelAuction(ctx context.Context, actor Actor, auctionID uuid
 		if err := s.releaseInvoices(ctx, q, a, reason); err != nil {
 			return err
 		}
+		if err := s.audit.Record(ctx, q,
+			audit.Of(ctx, actorRef(actor), ActionCancelled, auction.EntityType, a.ID.String(), s.now()).
+				With("reason", reason).
+				With("status", a.Status.String())); err != nil {
+			return err
+		}
 
 		cancelled = a
 		return nil
@@ -274,6 +331,12 @@ func (s *Service) releaseInvoices(ctx context.Context, q postgres.Querier, a *au
 			return err
 		}
 		if err := s.invoices.Update(ctx, q, inv, expectedVersion); err != nil {
+			return err
+		}
+		if err := s.audit.Record(ctx, q,
+			audit.Of(ctx, audit.SystemActor, ActionInvoiceReleased, invoice.EntityType, inv.ID.String(), s.now()).
+				With("auction_id", a.ID.String()).
+				With("status", inv.Status.String())); err != nil {
 			return err
 		}
 	}
@@ -325,12 +388,20 @@ func (s *Service) recordInvoiceOutcomes(ctx context.Context, q postgres.Querier,
 		}
 
 		expectedVersion := inv.Version
+		action := ActionInvoiceReleased
 		if sold[lot.InvoiceID] {
+			action = ActionInvoiceAllocated
 			err = inv.MarkAllocated(s.now())
 		} else {
 			err = inv.CancelAuction("no bid took this lot", s.now())
 		}
 		if err != nil {
+			return err
+		}
+		if err := s.audit.Record(ctx, q,
+			audit.Of(ctx, audit.SystemActor, action, invoice.EntityType, inv.ID.String(), s.now()).
+				With("auction_id", a.ID.String()).
+				With("status", inv.Status.String())); err != nil {
 			return err
 		}
 		if err := s.invoices.Update(ctx, q, inv, expectedVersion); err != nil {

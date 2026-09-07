@@ -29,6 +29,7 @@ import (
 	"github.com/GoldFridge/factorflow/internal/marketdata"
 	"github.com/GoldFridge/factorflow/internal/organization"
 	"github.com/GoldFridge/factorflow/internal/platform/apperr"
+	"github.com/GoldFridge/factorflow/internal/platform/audit"
 	"github.com/GoldFridge/factorflow/internal/platform/postgres"
 	"github.com/GoldFridge/factorflow/internal/risk"
 	"github.com/GoldFridge/factorflow/internal/tokenization"
@@ -89,6 +90,7 @@ type Store struct {
 	auctions      map[uuid.UUID]auction.Auction
 	bids          map[uuid.UUID]auction.Bid
 	solutions     map[uuid.UUID]auction.Solution
+	events        []audit.Event
 
 	snapshot *state
 	querier  *Querier
@@ -111,6 +113,7 @@ type state struct {
 	auctions    map[uuid.UUID]auction.Auction
 	bids        map[uuid.UUID]auction.Bid
 	solutions   map[uuid.UUID]auction.Solution
+	events      []audit.Event
 }
 
 // New returns an empty store.
@@ -171,6 +174,7 @@ func (s *Store) begin() {
 		auctions:    copyMap(s.auctions),
 		bids:        copyMap(s.bids),
 		solutions:   copyMap(s.solutions),
+		events:      append([]audit.Event(nil), s.events...),
 	}
 }
 
@@ -192,6 +196,7 @@ func (s *Store) rollback() {
 	s.auctions = s.snapshot.auctions
 	s.bids = s.snapshot.bids
 	s.solutions = s.snapshot.solutions
+	s.events = s.snapshot.events
 	s.snapshot = nil
 }
 

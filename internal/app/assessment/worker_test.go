@@ -17,10 +17,12 @@ import (
 	"github.com/GoldFridge/factorflow/internal/invoice"
 	"github.com/GoldFridge/factorflow/internal/marketdata"
 	"github.com/GoldFridge/factorflow/internal/platform/apperr"
+	"github.com/GoldFridge/factorflow/internal/platform/audit"
 	"github.com/GoldFridge/factorflow/internal/platform/money"
 	"github.com/GoldFridge/factorflow/internal/platform/outbox"
 	"github.com/GoldFridge/factorflow/internal/platform/postgres"
 	"github.com/GoldFridge/factorflow/internal/risk"
+	"github.com/GoldFridge/factorflow/internal/testsupport/audittest"
 )
 
 var testNow = time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
@@ -178,6 +180,7 @@ type workerFixture struct {
 	assessments *fakeAssessments
 	snapshots   *fakeSnapshots
 	db          *fakeDB
+	trail       *audittest.Recorder
 	invoice     *invoice.Invoice
 	clock       time.Time
 }
@@ -202,6 +205,7 @@ func newWorkerFixture(t *testing.T, workflow risk.Workflow) *workerFixture {
 		invoices:    &fakeInvoices{stored: map[uuid.UUID]invoice.Invoice{inv.ID: *inv}},
 		assessments: &fakeAssessments{},
 		snapshots:   &fakeSnapshots{},
+		trail:       audittest.New(),
 		invoice:     inv,
 		clock:       testNow,
 	}
@@ -226,6 +230,7 @@ func newWorkerFixture(t *testing.T, workflow risk.Workflow) *workerFixture {
 		Workflow:    workflow,
 		Model:       risk.ModelV1(),
 		Query:       marketdata.DemoQuery(),
+		Audit:       f.trail,
 		Now:         func() time.Time { return f.clock },
 		IDs:         uuid.New,
 	})
@@ -520,4 +525,38 @@ func TestAlreadyMovedInvoiceIsSkipped(t *testing.T) {
 
 	require.NoError(t, f.worker.Handle(context.Background(), f.event(t)))
 	assert.Empty(t, f.assessments.saved)
+}
+
+// TestTheAssessmentIsRecorded puts the two values a later reader needs on the timeline:
+// the market the price came from, and the commitment to the confidential run behind it.
+func TestTheAssessmentIsRecorded(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkerFixture(t, nil)
+	require.NoError(t, f.worker.Handle(t.Context(), f.event(t)))
+
+	require.Len(t, f.assessments.saved, 1)
+	stored := f.assessments.saved[0]
+
+	events := f.trail.For(invoice.EntityType, f.invoice.ID.String())
+	require.Len(t, events, 1)
+
+	recorded := events[0]
+	assert.Equal(t, assessment.ActionAssessed, recorded.Action)
+	assert.Equal(t, audit.SystemActor, recorded.Actor, "no person asked for this; the worker did it")
+	assert.Equal(t, stored.ID.String(), recorded.Detail["assessment_id"])
+	assert.Equal(t, stored.MarketSnapshotHash, recorded.Detail["market_snapshot_hash"])
+	assert.Equal(t, stored.ConfidentialCommitment, recorded.Detail["confidential_commitment"])
+	assert.Equal(t, invoice.StatusAssessed.String(), recorded.Detail["status"])
+}
+
+// TestAFailedAssessmentRecordsNothing keeps a failed run off the timeline: the invoice is
+// marked failed by its own path, and nothing claims a price was published.
+func TestAFailedAssessmentRecordsNothing(t *testing.T) {
+	t.Parallel()
+
+	f := newWorkerFixture(t, failingWorkflow{err: errors.New("TEE did not respond")})
+	require.Error(t, f.worker.Handle(t.Context(), f.event(t)))
+
+	assert.Empty(t, f.trail.Events())
 }

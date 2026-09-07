@@ -50,6 +50,7 @@ func newFixture(t *testing.T) *fixture {
 		Assessments: store.Assessments(),
 		Assets:      store.Assets(),
 		Auctions:    store.Auctions(),
+		Audit:       store.Audit(),
 		Now:         func() time.Time { return f.clock },
 		IDs:         uuid.New,
 	})
@@ -607,4 +608,81 @@ func TestCancelAfterClearingIsRefused(t *testing.T) {
 
 	stored, _ := f.store.Invoice(inv.ID)
 	assert.Equal(t, invoice.StatusAllocated, stored.Status, "an allocated invoice is not released")
+}
+
+// TestClearingIsRecordedWithItsCertificate puts on the timeline the one value an outside
+// verifier needs: the certificate hash it can recompute from the published bids.
+func TestClearingIsRecordedWithItsCertificate(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+	inv := f.tokenizedInvoice(t, f.issuer.OrganizationID, "INV-1")
+
+	a, err := f.service.OpenAuction(t.Context(), f.issuer, f.params(inv.ID))
+	require.NoError(t, err)
+	f.bid(t, a, uuid.New(), "0.05", "E", testNow)
+
+	f.clock = testClose
+	solution, err := f.service.ClearAuction(t.Context(), f.issuer, a.ID)
+	require.NoError(t, err)
+
+	events := f.store.Audit().For(auction.EntityType, a.ID.String())
+	require.Len(t, events, 2, "the batch was opened and then cleared")
+
+	cleared := events[0]
+	assert.Equal(t, marketplace.ActionCleared, cleared.Action)
+	assert.Equal(t, f.issuer.OrganizationID.String(), cleared.Actor)
+	assert.Equal(t, solution.CertificateHash, cleared.Detail["certificate_hash"])
+	assert.Equal(t, solution.SolverVersion, cleared.Detail["solver_version"])
+
+	// The invoice's own timeline says what happened to it, so an issuer reading one
+	// receivable does not have to reconstruct the batch it was in.
+	invoiceEvents := f.store.Audit().For(invoice.EntityType, inv.ID.String())
+	require.NotEmpty(t, invoiceEvents)
+	assert.Equal(t, marketplace.ActionInvoiceAllocated, invoiceEvents[0].Action)
+	assert.Equal(t, a.ID.String(), invoiceEvents[0].Detail["auction_id"])
+}
+
+func TestCancellationIsRecorded(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+	inv := f.tokenizedInvoice(t, f.issuer.OrganizationID, "INV-1")
+
+	a, err := f.service.OpenAuction(t.Context(), f.issuer, f.params(inv.ID))
+	require.NoError(t, err)
+
+	_, err = f.service.CancelAuction(t.Context(), f.issuer, a.ID, "withdrawn by the issuer")
+	require.NoError(t, err)
+
+	cancelled := f.store.Audit().For(auction.EntityType, a.ID.String())[0]
+	assert.Equal(t, marketplace.ActionCancelled, cancelled.Action)
+	assert.Equal(t, "withdrawn by the issuer", cancelled.Detail["reason"])
+
+	released := f.store.Audit().For(invoice.EntityType, inv.ID.String())[0]
+	assert.Equal(t, marketplace.ActionInvoiceReleased, released.Action)
+	assert.Equal(t, invoice.StatusTokenized.String(), released.Detail["status"])
+}
+
+// TestARolledBackClearingRecordsNothing is the property the shared transaction buys: a
+// clearing that did not commit leaves no claim that it did.
+func TestARolledBackClearingRecordsNothing(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+	inv := f.tokenizedInvoice(t, f.issuer.OrganizationID, "INV-1")
+
+	a, err := f.service.OpenAuction(t.Context(), f.issuer, f.params(inv.ID))
+	require.NoError(t, err)
+	f.bid(t, a, uuid.New(), "0.05", "E", testNow)
+
+	f.clock = testClose
+	f.store.FailCommit = errors.New("storage went away mid-clearing")
+	_, err = f.service.ClearAuction(t.Context(), f.issuer, a.ID)
+	require.Error(t, err)
+	f.store.FailCommit = nil
+
+	for _, e := range f.store.Audit().Events() {
+		assert.NotEqual(t, marketplace.ActionCleared, e.Action, "nothing claims the batch cleared")
+	}
 }

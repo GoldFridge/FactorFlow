@@ -16,6 +16,7 @@ import (
 
 	"github.com/GoldFridge/factorflow/internal/invoice"
 	"github.com/GoldFridge/factorflow/internal/platform/apperr"
+	"github.com/GoldFridge/factorflow/internal/platform/audit"
 	"github.com/GoldFridge/factorflow/internal/platform/outbox"
 	"github.com/GoldFridge/factorflow/internal/platform/postgres"
 	"github.com/GoldFridge/factorflow/internal/risk"
@@ -45,9 +46,13 @@ type Worker struct {
 	assets      tokenization.Repository
 	wallets     OrganizationWallets
 	issuer      tokenization.Issuer
+	audit       audit.Recorder
 	now         func() time.Time
 	ids         func() uuid.UUID
 }
+
+// ActionTokenized is the timeline entry for a minted receivable.
+const ActionTokenized = "invoice.tokenized"
 
 // Config wires the worker's collaborators.
 type Config struct {
@@ -57,6 +62,7 @@ type Config struct {
 	Assets      tokenization.Repository
 	Wallets     OrganizationWallets
 	Issuer      tokenization.Issuer
+	Audit       audit.Recorder
 	Now         func() time.Time
 	IDs         func() uuid.UUID
 }
@@ -69,6 +75,9 @@ func NewWorker(cfg Config) *Worker {
 	if cfg.IDs == nil {
 		cfg.IDs = uuid.New
 	}
+	if cfg.Audit == nil {
+		cfg.Audit = audit.Discard{}
+	}
 	return &Worker{
 		db:          cfg.DB,
 		invoices:    cfg.Invoices,
@@ -76,6 +85,7 @@ func NewWorker(cfg Config) *Worker {
 		assets:      cfg.Assets,
 		wallets:     cfg.Wallets,
 		issuer:      cfg.Issuer,
+		audit:       cfg.Audit,
 		now:         cfg.Now,
 		ids:         cfg.IDs,
 	}
@@ -180,24 +190,37 @@ func (w *Worker) commit(ctx context.Context, inv *invoice.Invoice, asset *tokeni
 		if err := w.assets.Create(ctx, q, asset); err != nil {
 			return err
 		}
-
-		expectedVersion := inv.Version
-		if err := inv.CompleteTokenization(asset.ID, w.now()); err != nil {
-			return err
-		}
-		return w.invoices.Update(ctx, q, inv, expectedVersion)
+		return w.finish(ctx, q, inv, asset)
 	})
 }
 
 // complete finishes an invoice whose asset already exists.
 func (w *Worker) complete(ctx context.Context, inv *invoice.Invoice, asset *tokenization.Asset) error {
 	return w.db.InTx(ctx, func(q postgres.Querier) error {
-		expectedVersion := inv.Version
-		if err := inv.CompleteTokenization(asset.ID, w.now()); err != nil {
-			return err
-		}
-		return w.invoices.Update(ctx, q, inv, expectedVersion)
+		return w.finish(ctx, q, inv, asset)
 	})
+}
+
+// finish moves the invoice and records the mint. Both redelivery paths share it, so a
+// retried command produces the same timeline entry as the first attempt rather than a
+// second, differently shaped one.
+func (w *Worker) finish(ctx context.Context, q postgres.Querier, inv *invoice.Invoice, asset *tokenization.Asset) error {
+	expectedVersion := inv.Version
+	if err := inv.CompleteTokenization(asset.ID, w.now()); err != nil {
+		return err
+	}
+	if err := w.invoices.Update(ctx, q, inv, expectedVersion); err != nil {
+		return err
+	}
+
+	return w.audit.Record(ctx, q,
+		audit.Of(ctx, audit.SystemActor, ActionTokenized, invoice.EntityType, inv.ID.String(), w.now()).
+			With("asset_id", asset.ID.String()).
+			With("network", asset.Network).
+			With("token_id", asset.TokenID).
+			With("chain_status", asset.ChainStatus.String()).
+			With("transaction_id", asset.TransactionID).
+			With("status", inv.Status.String()))
 }
 
 // recordFailure marks the invoice failed at the issuance stage and returns the cause, so

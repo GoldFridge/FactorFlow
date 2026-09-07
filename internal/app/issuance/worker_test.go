@@ -14,6 +14,7 @@ import (
 	"github.com/GoldFridge/factorflow/internal/app/issuance"
 	"github.com/GoldFridge/factorflow/internal/invoice"
 	"github.com/GoldFridge/factorflow/internal/platform/apperr"
+	"github.com/GoldFridge/factorflow/internal/platform/audit"
 	"github.com/GoldFridge/factorflow/internal/platform/money"
 	"github.com/GoldFridge/factorflow/internal/platform/outbox"
 	"github.com/GoldFridge/factorflow/internal/platform/postgres"
@@ -95,6 +96,7 @@ func newFixture(t *testing.T, assetIssuer tokenization.Issuer, wallets issuance.
 		Assets:      store.Assets(),
 		Wallets:     wallets,
 		Issuer:      f.issuer,
+		Audit:       store.Audit(),
 		Now:         func() time.Time { return f.clock },
 		IDs:         uuid.New,
 	})
@@ -383,4 +385,42 @@ func TestUnknownInvoice(t *testing.T) {
 
 	err = f.worker.Handle(context.Background(), outbox.Event{Payload: payload})
 	require.ErrorIs(t, err, apperr.ErrNotFound)
+}
+
+// TestTheMintIsRecorded puts the chain facts on the timeline, which is where an issuer
+// looks to find out which token represents their receivable.
+func TestTheMintIsRecorded(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t, nil, nil)
+	require.NoError(t, f.worker.Handle(t.Context(), f.event(t)))
+
+	stored, ok := f.store.Invoice(f.invoice.ID)
+	require.True(t, ok)
+	asset, ok := f.store.Asset(stored.AssetID)
+	require.True(t, ok)
+
+	events := f.store.Audit().For(invoice.EntityType, f.invoice.ID.String())
+	require.Len(t, events, 1)
+
+	recorded := events[0]
+	assert.Equal(t, issuance.ActionTokenized, recorded.Action)
+	assert.Equal(t, audit.SystemActor, recorded.Actor)
+	assert.Equal(t, asset.ID.String(), recorded.Detail["asset_id"])
+	assert.Equal(t, asset.TokenID, recorded.Detail["token_id"])
+	assert.Equal(t, asset.Network, recorded.Detail["network"])
+	assert.Equal(t, invoice.StatusTokenized.String(), recorded.Detail["status"])
+}
+
+// TestARedeliveredMintRecordsOneEntry keeps the timeline honest under the retry the outbox
+// is allowed to perform: the receivable was minted once, so it says so once.
+func TestARedeliveredMintRecordsOneEntry(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t, nil, nil)
+	require.NoError(t, f.worker.Handle(t.Context(), f.event(t)))
+	require.NoError(t, f.worker.Handle(t.Context(), f.event(t)))
+
+	assert.Equal(t, 1, f.store.AssetCount())
+	assert.Len(t, f.store.Audit().For(invoice.EntityType, f.invoice.ID.String()), 1)
 }
