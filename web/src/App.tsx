@@ -5,6 +5,7 @@ import { InvoiceDetail } from "./screens/InvoiceDetail";
 import { Invoices } from "./screens/Invoices";
 import { Market } from "./screens/Market";
 import { Marketplace } from "./screens/Marketplace";
+import { NewInvoice } from "./screens/NewInvoice";
 import { SignIn } from "./screens/SignIn";
 import { useSession } from "./session";
 
@@ -37,6 +38,7 @@ export function App() {
           <Route path="/" element={<Marketplace />} />
           <Route path="/auctions/:id" element={<AuctionDetail />} />
           <Route path="/invoices" element={<Invoices />} />
+          <Route path="/invoices/new" element={<NewInvoice />} />
           <Route path="/invoices/:id" element={<InvoiceDetail />} />
           <Route path="/market" element={<Market />} />
           <Route path="*" element={<p className="empty">That page does not exist.</p>} />

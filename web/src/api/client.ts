@@ -118,6 +118,30 @@ export const api = {
   organization: (auth: string, id: string) =>
     request<Organization>(`${base}/organizations/${id}`, auth),
 
+  createInvoice: (auth: string, invoice: Record<string, unknown>) =>
+    request<Invoice>(`${base}/invoices`, auth, { method: "POST", body: JSON.stringify(invoice) }),
+
+  /**
+   * uploadDocument sends the ciphertext. The key that opens it stays in the browser, which
+   * is why this is the only call that can honestly be described as private.
+   */
+  uploadDocument: (
+    auth: string,
+    invoiceID: string,
+    document: { ciphertext: string; mime: string; key_ref: string },
+  ) =>
+    request<{ cipher_hash: string; size_bytes: number; status: string }>(
+      `${base}/invoices/${invoiceID}/document/content`,
+      auth,
+      { method: "POST", body: JSON.stringify(document) },
+    ),
+
+  requestAssessment: (auth: string, invoiceID: string) =>
+    request<Invoice>(`${base}/invoices/${invoiceID}/assess`, auth, {
+      method: "POST",
+      body: "{}",
+    }),
+
   invoices: (auth: string) =>
     request<Items<Invoice>>(`${base}/invoices`, auth).then((r) => r.items),
 

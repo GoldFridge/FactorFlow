@@ -202,6 +202,19 @@ steps. A subgraph that fails takes the whole fetch with it, because dropping the
 did not answer would move the benchmark with nothing on the snapshot to say why — so pricing
 fails closed and the invoice is assessed once the gateway is answering again.
 
+## Uploading a receivable
+
+The document is encrypted in the browser before anything is sent: AES-GCM under a key
+generated in that tab, which is never transmitted and is kept only there. What the platform
+stores is the ciphertext and the digest it computed over the bytes it actually received —
+never the digest the uploader claimed — and that digest is what binds the published price to
+this document.
+
+The consequence is deliberate and worth stating plainly: nobody at the platform can open a
+stored document, and neither can a backup or a leak. With a confidential workflow in front of
+it the key would be wrapped to the enclave's public key instead, which is the one party meant
+to read a document, and still not this server.
+
 ## Reseeding
 
 Stop the server before seeding. Both processes run the same outbox dispatcher, and a running

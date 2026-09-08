@@ -116,6 +116,7 @@ func start() (*postgres.DB, func(), error) {
 // handle the foreign keys.
 const truncateStatement = `
 TRUNCATE TABLE
+    encrypted_objects,
     idempotency_keys,
     outbox_events,
     audit_events,

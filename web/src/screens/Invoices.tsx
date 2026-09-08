@@ -129,14 +129,13 @@ export function Invoices() {
         <Chips choices={counts} current={stage} onChoose={setStage} />
         <Search value={query} onChange={setQuery} placeholder="Search number or debtor" />
         <div className="toolbar-end">
-          <button
-            className="button is-primary"
-            disabled={busy !== "" || selected.length === 0}
-            onClick={listBatch}
-          >
-            {selected.length === 0
-              ? "List a batch"
-              : `List ${selected.length} as a batch`}
+          {selected.length > 0 ? (
+            <button className="button" disabled={busy !== ""} onClick={listBatch}>
+              List {selected.length} as a batch
+            </button>
+          ) : null}
+          <button className="button is-primary" onClick={() => navigate("/invoices/new")}>
+            Upload a receivable
           </button>
         </div>
       </div>

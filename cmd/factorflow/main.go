@@ -19,6 +19,7 @@ import (
 	"github.com/GoldFridge/factorflow/internal/app/agents"
 	"github.com/GoldFridge/factorflow/internal/app/assessment"
 	"github.com/GoldFridge/factorflow/internal/app/demo"
+	"github.com/GoldFridge/factorflow/internal/app/documents"
 	"github.com/GoldFridge/factorflow/internal/app/issuance"
 	"github.com/GoldFridge/factorflow/internal/app/marketplace"
 	"github.com/GoldFridge/factorflow/internal/app/onboarding"
@@ -36,6 +37,7 @@ import (
 	"github.com/GoldFridge/factorflow/internal/platform/httpserver"
 	"github.com/GoldFridge/factorflow/internal/platform/idempotency"
 	"github.com/GoldFridge/factorflow/internal/platform/money"
+	"github.com/GoldFridge/factorflow/internal/platform/objects"
 	"github.com/GoldFridge/factorflow/internal/platform/outbox"
 	"github.com/GoldFridge/factorflow/internal/platform/postgres"
 	"github.com/GoldFridge/factorflow/internal/risk"
@@ -292,6 +294,13 @@ func wire(cfg config.Config, db *postgres.DB, clk *clock.Clock, ids func() uuid.
 		IDs:         ids,
 	})
 
+	documentService := documents.NewService(documents.Config{
+		DB:       db,
+		Invoices: invoices,
+		Objects:  objects.NewPostgresStore(),
+		Audit:    trail,
+		Now:      now,
+	})
 	reportingService := reporting.NewService(reporting.Config{
 		DB:          db,
 		Invoices:    invoices,
@@ -307,6 +316,7 @@ func wire(cfg config.Config, db *postgres.DB, clk *clock.Clock, ids func() uuid.
 	marketplaceHandler := marketplace.NewHandler(marketplaceService)
 	onboardingHandler := onboarding.NewHandler(onboardingService)
 	reportingHandler := reporting.NewHandler(reportingService, now)
+	documentHandler := documents.NewHandler(documentService)
 	paidHandler := payments.NewHandler(paidService)
 	paidPrice := paidPrice(cfg)
 
@@ -338,6 +348,7 @@ func wire(cfg config.Config, db *postgres.DB, clk *clock.Clock, ids func() uuid.
 				marketplaceHandler.Routes(protected)
 				onboardingHandler.Routes(protected)
 				reportingHandler.Routes(protected)
+				documentHandler.Routes(protected)
 			})
 		},
 	})
