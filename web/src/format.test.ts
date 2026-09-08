@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { percent, relative, shortHash, tone, words } from "./format";
+import { compact, money, percent, relative, shortHash, sum, tone, words } from "./format";
 
 /**
  * The percentage tests are the ones that matter.
@@ -78,5 +78,52 @@ describe("relative", () => {
 
   it("does not say 1 hours", () => {
     expect(relative("2026-09-08T13:00:00Z", now)).toBe("in 1 hour");
+  });
+});
+
+describe("money", () => {
+  it("groups without ever making the value a number", () => {
+    expect(money("20060327.41", "USD")).toBe("$20,060,327.41");
+    expect(money("999.00", "USD")).toBe("$999.00");
+    expect(money("1000", "USD")).toBe("$1,000");
+    expect(money("-1234567.89", "USD")).toBe("-$1,234,567.89");
+  });
+
+  it("keeps a code a reader would otherwise have to guess", () => {
+    expect(money("1234.50", "EUR")).toBe("1,234.50 EUR");
+  });
+
+  it("survives a value wider than a double can hold exactly", () => {
+    expect(money("9007199254740993.01", "USD")).toBe("$9,007,199,254,740,993.01");
+  });
+});
+
+/**
+ * A total is where a screen is most tempted to do arithmetic, and where a float error would
+ * make the header disagree with the rows underneath it.
+ */
+describe("sum", () => {
+  it("adds exactly", () => {
+    expect(sum(["10000.00", "5000.50", "0.49"])).toBe("15000.99");
+    expect(sum([])).toBe("0.00");
+    expect(sum(["21000.00"])).toBe("21000.00");
+  });
+
+  it("adds values a float would get wrong", () => {
+    expect(sum(["0.1", "0.2"])).toBe("0.3");
+    expect(sum(["9007199254740992.00", "1.00"])).toBe("9007199254740993.00");
+  });
+
+  it("lines up amounts written to different scales", () => {
+    expect(sum(["1.5", "2.25", "3"])).toBe("6.75");
+  });
+});
+
+describe("compact", () => {
+  it("shortens a total to what a header has room for", () => {
+    expect(compact("1443578760.47")).toBe("$1.44B");
+    expect(compact("346696296.49")).toBe("$346.69M");
+    expect(compact("21000.00")).toBe("$21.00K");
+    expect(compact("980.00")).toBe("$980");
   });
 });

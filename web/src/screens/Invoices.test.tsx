@@ -75,12 +75,18 @@ describe("the issuer's book", () => {
     renderBook();
 
     const rowFor = async (number: string) =>
-      (await screen.findByText(number)).closest("tr") as HTMLElement;
+      (await screen.findByText(number)).closest(".row") as HTMLElement;
 
-    expect(within(await rowFor("INV-1")).queryByRole("button")).toBeNull();
-    expect(within(await rowFor("INV-2")).getByRole("button")).toHaveTextContent("Approve price");
-    expect(within(await rowFor("INV-3")).getByRole("button")).toHaveTextContent("Mint asset");
-    expect(within(await rowFor("INV-4")).queryByRole("button")).toBeNull();
+    // Every row can be opened; what varies is whether a step is offered beside that.
+    const stepIn = (row: HTMLElement) =>
+      within(row)
+        .getAllByRole("button")
+        .filter((button) => button.getAttribute("aria-label") !== "Open receivable");
+
+    expect(stepIn(await rowFor("INV-1"))).toHaveLength(0);
+    expect(stepIn(await rowFor("INV-2"))[0]).toHaveTextContent("Approve price");
+    expect(stepIn(await rowFor("INV-3"))[0]).toHaveTextContent("Mint asset");
+    expect(stepIn(await rowFor("INV-4"))).toHaveLength(0);
   });
 
   it("reloads after an action so the new status is the one on screen", async () => {

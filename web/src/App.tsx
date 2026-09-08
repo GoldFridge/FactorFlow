@@ -37,7 +37,10 @@ function Masthead() {
   return (
     <header className="masthead">
       <span className="brand">
-        FactorFlow <small>receivables</small>
+        <span className="mark" aria-hidden="true">
+          F
+        </span>
+        FactorFlow
       </span>
 
       <nav className="nav">

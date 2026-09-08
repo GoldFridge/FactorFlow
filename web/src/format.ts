@@ -6,9 +6,23 @@
  * reader, so a rate is rendered by moving its decimal point rather than by multiplying.
  */
 
-/** money renders an amount with its currency, keeping the digits the server sent. */
+/**
+ * money renders an amount, keeping every digit the server sent.
+ *
+ * Grouping is inserted into the string rather than delegated to Intl.NumberFormat, which
+ * takes a Number and would quietly round a value wider than a double before a person read
+ * it. Dollars get their symbol; anything else keeps its code, because a symbol a reader has
+ * to guess at is worse than three letters.
+ */
 export function money(amount: string, currency: string): string {
-  return `${amount} ${currency}`;
+  const negative = amount.startsWith("-");
+  const [whole = "0", fraction] = (negative ? amount.slice(1) : amount).split(".");
+  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+
+  const rendered = fraction === undefined ? grouped : `${grouped}.${fraction}`;
+  const sign = negative ? "-" : "";
+
+  return currency === "USD" ? `${sign}$${rendered}` : `${sign}${rendered} ${currency}`;
 }
 
 /**
@@ -143,4 +157,55 @@ export function tone(status: string): "" | "is-live" | "is-working" | "is-done" 
     default:
       return "";
   }
+}
+
+/**
+ * sum adds decimal amounts exactly.
+ *
+ * A total is the one place a screen is tempted to do arithmetic, and Number("20060327.41")
+ * plus its neighbours is how a venue ends up displaying a total that disagrees with its own
+ * rows. The digits are added as integers instead, in the scale they arrived in.
+ */
+export function sum(amounts: string[]): string {
+  if (amounts.length === 0) {
+    return "0.00";
+  }
+
+  const scale = amounts.reduce((widest, amount) => {
+    const point = amount.indexOf(".");
+    return Math.max(widest, point === -1 ? 0 : amount.length - point - 1);
+  }, 0);
+
+  const total = amounts.reduce((running, amount) => {
+    const [whole = "0", fraction = ""] = amount.split(".");
+    return running + BigInt(whole + fraction.padEnd(scale, "0"));
+  }, 0n);
+
+  const digits = total.toString().padStart(scale + 1, "0");
+  const boundary = digits.length - scale;
+  return scale === 0 ? digits : `${digits.slice(0, boundary)}.${digits.slice(boundary)}`;
+}
+
+/** compact shortens a total for a stat card: 1443578760.47 becomes $1.44B. */
+export function compact(amount: string, currency = "USD"): string {
+  const symbol = currency === "USD" ? "$" : "";
+  const whole = amount.split(".")[0] ?? "0";
+  const negative = whole.startsWith("-");
+  const digits = negative ? whole.slice(1) : whole;
+
+  const units: [number, string][] = [
+    [10, "B"],
+    [7, "M"],
+    [4, "K"],
+  ];
+  for (const [length, suffix] of units) {
+    // A billion is ten digits, so the boundary is the length itself and not one past it.
+    if (digits.length >= length) {
+      const point = digits.length - (length - 1);
+      const head = digits.slice(0, point);
+      const tail = digits.slice(point, point + 2);
+      return `${negative ? "-" : ""}${symbol}${head}.${tail}${suffix}`;
+    }
+  }
+  return `${negative ? "-" : ""}${symbol}${digits}`;
 }
