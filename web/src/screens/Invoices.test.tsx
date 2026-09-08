@@ -13,6 +13,9 @@ vi.mock("../api/client", async () => {
   return {
     ...actual,
     api: {
+      me: vi.fn(),
+      organization: vi.fn(),
+      logout: vi.fn(),
       invoices: vi.fn(),
       approveInvoice: vi.fn(),
       tokenizeInvoice: vi.fn(),
@@ -42,8 +45,34 @@ function invoice(overrides: Partial<Invoice>): Invoice {
   };
 }
 
+/**
+ * The book is rendered behind a signed-in session, because that is the only way it is ever
+ * reached: the provider asks the server who the caller is, and these stubs are that answer.
+ */
+function signedIn() {
+  vi.mocked(api.me).mockResolvedValue({
+    organization_id: issuer.id,
+    wallet: "0x00000000000000000000000000000000000000a1",
+    role: "owner",
+    eligible: true,
+    operator: false,
+  });
+  vi.mocked(api.organization).mockResolvedValue({
+    id: issuer.id,
+    type: "ISSUER",
+    name: issuer.name,
+    wallet: "0x00000000000000000000000000000000000000a1",
+    eligibility: "ELIGIBLE",
+    can_issue: true,
+    can_invest: false,
+    version: 1,
+    created_at: "2026-09-01T00:00:00Z",
+    updated_at: "2026-09-01T00:00:00Z",
+  });
+}
+
 function renderBook() {
-  localStorage.setItem("factorflow.participant", issuer.id);
+  signedIn();
   return render(
     <MemoryRouter>
       <SessionProvider>
@@ -98,7 +127,7 @@ describe("the issuer's book", () => {
     renderBook();
     await userEvent.click(await screen.findByRole("button", { name: "Approve price" }));
 
-    await waitFor(() => expect(api.approveInvoice).toHaveBeenCalledWith(issuer.id, "i1"));
+    await waitFor(() => expect(api.approveInvoice).toHaveBeenCalledWith("", "i1"));
     expect(await screen.findByRole("button", { name: "Mint asset" })).toBeInTheDocument();
   });
 

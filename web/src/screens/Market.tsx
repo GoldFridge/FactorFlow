@@ -11,8 +11,8 @@ import { useSession } from "../session";
  * observation is not a benchmark, it is an assertion.
  */
 export function Market() {
-  const { actor } = useSession();
-  const state = useAsync(() => api.benchmark(actor.id), [actor.id]);
+  const { auth } = useSession();
+  const state = useAsync(() => api.benchmark(auth), [auth]);
 
   return (
     <>

@@ -958,3 +958,99 @@ th.num {
     justify-content: flex-start;
   }
 }
+
+/* ---------------------------------------------------------------- the gate */
+
+.gate {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: 32px 20px;
+}
+
+.gate-card {
+  width: min(460px, 100%);
+  padding: 32px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: linear-gradient(165deg, var(--surface-2), var(--surface));
+}
+
+.gate-mark {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  margin-bottom: 18px;
+  border-radius: 12px;
+  background: linear-gradient(145deg, var(--accent-bright), var(--accent-deep));
+  color: #04110d;
+  font-weight: 800;
+  font-size: 20px;
+}
+
+.gate-card h1 {
+  margin: 0 0 8px;
+  font-size: 23px;
+  letter-spacing: -0.02em;
+}
+
+.gate-card p {
+  margin: 0 0 18px;
+}
+
+.gate-action {
+  width: 100%;
+  padding: 11px 16px;
+}
+
+.gate-fallback {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.gate-fallback select {
+  flex: 1;
+  min-width: 0;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+}
+
+.gate-form {
+  display: grid;
+  gap: 14px;
+}
+
+/* ---------------------------------------------------------------- account */
+
+.account {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.account-card {
+  display: grid;
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  line-height: 1.25;
+}
+
+.account-name {
+  font-size: 12px;
+  font-weight: 580;
+  max-width: 190px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-wallet {
+  font-size: 11px;
+  color: var(--text-faint);
+}

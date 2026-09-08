@@ -16,14 +16,14 @@ import { useSession } from "../session";
  */
 export function InvoiceDetail() {
   const { id = "" } = useParams();
-  const { actor } = useSession();
+  const { auth } = useSession();
 
-  const invoice = useAsync(() => api.invoice(actor.id, id), [actor.id, id]);
+  const invoice = useAsync(() => api.invoice(auth, id), [auth, id]);
   const assessment = useAsync(
-    () => api.assessment(actor.id, id).catch(() => null),
-    [actor.id, id],
+    () => api.assessment(auth, id).catch(() => null),
+    [auth, id],
   );
-  const timeline = useAsync(() => api.timeline(actor.id, id).catch(() => []), [actor.id, id]);
+  const timeline = useAsync(() => api.timeline(auth, id).catch(() => []), [auth, id]);
 
   return (
     <Loader state={invoice}>

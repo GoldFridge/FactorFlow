@@ -1,12 +1,57 @@
-import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
+
+import { api, ApiError } from "./api/client";
+import * as wallet from "./wallet";
 
 /**
- * The demo participants.
+ * Who the caller is.
+ *
+ * A wallet proves itself to the server and gets a session cookie; the browser never holds a
+ * key and cannot read the cookie. Everything the interface then allows follows from what the
+ * server says about that organization, not from anything decided here.
+ */
+export interface Actor {
+  id: string;
+  wallet: string;
+  name: string;
+  type: "ISSUER" | "INVESTOR" | "OPERATOR" | "";
+  eligible: boolean;
+  operator: boolean;
+}
+
+const anonymous: Actor = {
+  id: "",
+  wallet: "",
+  name: "",
+  type: "",
+  eligible: false,
+  operator: false,
+};
+
+export type Stage =
+  /** The cookie has not been checked yet. */
+  | "loading"
+  /** Nobody is signed in. */
+  | "anonymous"
+  /** A wallet proved itself, but no organization has been registered for it. */
+  | "unregistered"
+  | "signed-in";
+
+/**
+ * The seeded participants, for a browser with no wallet.
  *
  * Their identifiers are the ones the seed writes, and the seed derives them from a fixed
- * namespace precisely so a screen can name them. Nothing here grants any authority: the
- * server reads what an organization may do from its own record, so picking a name in this
- * switcher can only ever narrow what the API will allow, never widen it.
+ * namespace so a screen can name them. Choosing one here sends a header the API honours only
+ * in development, and even then the server reads what that organization may do from its own
+ * record — so this can never grant anything a wallet session would not have.
  */
 export interface Participant {
   id: string;
@@ -22,47 +67,226 @@ export const participants: Participant[] = [
   { id: "00000000-0000-4000-8000-000000000001", name: "FactorFlow Operations", role: "OPERATOR" },
 ];
 
-const storageKey = "factorflow.participant";
+const demoKey = "factorflow.demo-participant";
 
 interface Session {
-  actor: Participant;
-  setActor: (id: string) => void;
+  stage: Stage;
+  actor: Actor;
+  /** auth is the development header value, and empty for a real wallet session. */
+  auth: string;
+  /** pendingWallet is the address that proved itself but has no organization yet. */
+  pendingWallet: string;
+  walletAvailable: boolean;
+  busy: boolean;
+  error: unknown;
+
   isIssuer: boolean;
   isInvestor: boolean;
   isOperator: boolean;
   nameOf: (organizationID: string) => string;
+
+  connect: () => Promise<void>;
+  register: (type: string, name: string) => Promise<void>;
+  signOut: () => Promise<void>;
+  useDemo: (participantID: string) => void;
+  dismissError: () => void;
 }
 
 const SessionContext = createContext<Session | null>(null);
 
-function stored(): Participant {
-  const saved = localStorage.getItem(storageKey);
-  return participants.find((p) => p.id === saved) ?? participants[0]!;
-}
-
 export function SessionProvider({ children }: { children: ReactNode }) {
-  const [actor, setCurrent] = useState<Participant>(stored);
+  const [stage, setStage] = useState<Stage>("loading");
+  const [actor, setActor] = useState<Actor>(anonymous);
+  const [auth, setAuth] = useState("");
+  const [pendingWallet, setPendingWallet] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+
+  const available = wallet.walletAvailable();
+
+  /**
+   * load asks the server who the caller is.
+   *
+   * The answer comes from the session cookie, so a reload keeps a person signed in without
+   * the app storing anything itself. The organization is then read for its name and type,
+   * which the session endpoint deliberately does not carry.
+   */
+  const load = useCallback(async (header: string): Promise<boolean> => {
+    try {
+      const identity = await api.me(header);
+      const organization = await api
+        .organization(header, identity.organization_id)
+        .catch(() => null);
+
+      setActor({
+        id: identity.organization_id,
+        wallet: identity.wallet,
+        name: organization?.name ?? identity.wallet,
+        type: (organization?.type as Actor["type"]) ?? "",
+        eligible: identity.eligible,
+        operator: identity.operator,
+      });
+      setAuth(header);
+      setStage("signed-in");
+      return true;
+    } catch {
+      setActor(anonymous);
+      setAuth("");
+      setStage("anonymous");
+      return false;
+    }
+  }, []);
+
+  // A signed-in session survives a reload; a chosen demo participant survives one too, so a
+  // developer is not asked to pick again on every edit.
+  useEffect(() => {
+    let live = true;
+
+    (async () => {
+      const restored = await load("");
+      if (!live || restored) {
+        return;
+      }
+      const saved = localStorage.getItem(demoKey);
+      if (saved && !available && participants.some((p) => p.id === saved)) {
+        await load(saved);
+      }
+    })();
+
+    return () => {
+      live = false;
+    };
+  }, [load, available]);
+
+  /** The wallet switching accounts means a different person is at the keyboard. */
+  useEffect(
+    () =>
+      wallet.onAccountChange((account) => {
+        if (actor.wallet && account !== actor.wallet) {
+          void api.logout().catch(() => {});
+          setActor(anonymous);
+          setAuth("");
+          setPendingWallet("");
+          setStage("anonymous");
+        }
+      }),
+    [actor.wallet],
+  );
+
+  const connect = useCallback(async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const account = await wallet.connect();
+      const challenge = await api.challenge(account);
+      const signature = await wallet.sign(challenge.message, account);
+
+      try {
+        await api.verify(challenge.nonce, signature);
+      } catch (cause) {
+        // A well-formed address that no organization claims is not a failure: it is someone
+        // who has not registered yet, and the next screen is the form rather than an error.
+        if (cause instanceof ApiError && cause.status === 403) {
+          setPendingWallet(account);
+          setStage("unregistered");
+          return;
+        }
+        throw cause;
+      }
+
+      await load("");
+    } catch (cause) {
+      setError(cause);
+    } finally {
+      setBusy(false);
+    }
+  }, [load]);
+
+  /**
+   * register creates the organization behind a proven wallet.
+   *
+   * It signs a second, fresh challenge rather than reusing the one that just failed: a nonce
+   * is spent by the request that verifies it, and asking the wallet again is honest about
+   * what is being authorized — this signature creates an organization.
+   */
+  const register = useCallback(
+    async (type: string, name: string) => {
+      setBusy(true);
+      setError(null);
+      try {
+        const account = pendingWallet || (await wallet.connect());
+        const challenge = await api.challenge(account);
+        const signature = await wallet.sign(challenge.message, account);
+
+        await api.register(challenge.nonce, signature, type, name);
+
+        const next = await api.challenge(account);
+        await api.verify(next.nonce, await wallet.sign(next.message, account));
+        await load("");
+        setPendingWallet("");
+      } catch (cause) {
+        setError(cause);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [load, pendingWallet],
+  );
+
+  const signOut = useCallback(async () => {
+    setBusy(true);
+    try {
+      await api.logout().catch(() => {});
+      localStorage.removeItem(demoKey);
+      setActor(anonymous);
+      setAuth("");
+      setPendingWallet("");
+      setStage("anonymous");
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  const useDemo = useCallback(
+    (participantID: string) => {
+      const participant = participants.find((p) => p.id === participantID);
+      if (!participant) {
+        return;
+      }
+      localStorage.setItem(demoKey, participant.id);
+
+      // The header names an organization; everything about it still comes from the server.
+      setBusy(true);
+      void load(participant.id).finally(() => setBusy(false));
+    },
+    [load],
+  );
 
   const value = useMemo<Session>(
     () => ({
+      stage,
       actor,
-      setActor: (id: string) => {
-        const next = participants.find((p) => p.id === id);
-        if (next) {
-          localStorage.setItem(storageKey, next.id);
-          setCurrent(next);
-        }
-      },
-      isIssuer: actor.role === "ISSUER",
-      isInvestor: actor.role === "INVESTOR",
-      isOperator: actor.role === "OPERATOR",
-      // An id on its own tells a reader nothing. Where the API returns one for a
-      // counterparty the demo knows, the name is shown instead, and the id is kept for
-      // anyone the demo does not know rather than being hidden.
+      auth,
+      pendingWallet,
+      walletAvailable: available,
+      busy,
+      error,
+      isIssuer: actor.type === "ISSUER",
+      isInvestor: actor.type === "INVESTOR",
+      isOperator: actor.operator,
+      // An identifier on its own tells a reader nothing, so a counterparty the demo knows is
+      // named, and one it does not know keeps its id rather than being hidden.
       nameOf: (organizationID: string) =>
-        participants.find((p) => p.id === organizationID)?.name ?? organizationID,
+        organizationID === actor.id
+          ? actor.name || organizationID
+          : (participants.find((p) => p.id === organizationID)?.name ?? organizationID),
+      connect,
+      register,
+      signOut,
+      useDemo,
+      dismissError: () => setError(null),
     }),
-    [actor],
+    [stage, actor, auth, pendingWallet, available, busy, error, connect, register, signOut, useDemo],
   );
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;

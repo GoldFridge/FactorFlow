@@ -39,9 +39,9 @@ const filters = [
  * the meter under each yield compares that row only against what is on this screen.
  */
 export function Marketplace() {
-  const { actor, isIssuer, nameOf } = useSession();
+  const { auth, isIssuer, nameOf } = useSession();
   const navigate = useNavigate();
-  const state = useAsync(() => api.auctions(actor.id), [actor.id]);
+  const state = useAsync(() => api.auctions(auth), [auth]);
 
   const [filter, setFilter] = useState("all");
   const [query, setQuery] = useState("");

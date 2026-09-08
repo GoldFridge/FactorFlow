@@ -150,10 +150,15 @@ The web app is a separate process in development:
 cd web && npm install && npm run dev                # the app on :5173
 ```
 
-It proxies `/api` to the server, and the participant switcher in the masthead chooses which
-seeded organization you are acting as. That switcher is a development affordance: the server
-reads what an organization may actually do from its own record, so choosing a name can only
-narrow what the API allows.
+It proxies `/api` to the server. Signing in is a wallet signature: the server issues a
+one-shot challenge, the wallet signs it, and the recovered address names the organization —
+the browser never holds a key, and the session cookie it gets back is HttpOnly. A wallet with
+no organization behind it is offered registration rather than an error, because the refusal
+only arrives after the signature has proved who is asking.
+
+A browser with no injected wallet falls back to naming a seeded participant in a header the
+API honours only in development. Even then the server reads what that organization may do
+from its own record, so the shortcut can never grant more than a real session would.
 
 ## Configuration
 

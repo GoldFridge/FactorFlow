@@ -13,17 +13,17 @@ import { useSession } from "../session";
  */
 export function AuctionDetail() {
   const { id = "" } = useParams();
-  const { actor, isInvestor, nameOf } = useSession();
+  const { actor, auth, isInvestor, isOperator, nameOf } = useSession();
 
-  const auction = useAsync(() => api.auction(actor.id, id), [actor.id, id]);
-  const bids = useAsync(() => api.bids(actor.id, id).catch(() => []), [actor.id, id]);
+  const auction = useAsync(() => api.auction(auth, id), [auth, id]);
+  const bids = useAsync(() => api.bids(auth, id).catch(() => []), [auth, id]);
   const solution = useAsync(
-    () => api.allocations(actor.id, id).catch(() => null),
-    [actor.id, id],
+    () => api.allocations(auth, id).catch(() => null),
+    [auth, id],
   );
   const settlements = useAsync(
-    () => api.settlements(actor.id, id).catch(() => []),
-    [actor.id, id],
+    () => api.settlements(auth, id).catch(() => []),
+    [auth, id],
   );
 
   const reloadAll = () => {
@@ -101,7 +101,7 @@ export function AuctionDetail() {
               <BidForm auctionID={batch.id} currency={batch.currency} onPlaced={reloadAll} />
             ) : null}
 
-            {mine || actor.role === "OPERATOR" ? (
+            {mine || isOperator ? (
               <IssuerActions
                 auctionID={batch.id}
                 status={batch.status}
@@ -280,7 +280,7 @@ function BidForm({
   currency: string;
   onPlaced: () => void;
 }) {
-  const { actor } = useSession();
+  const { auth } = useSession();
   const [budget, setBudget] = useState("25000.00");
   const [minYield, setMinYield] = useState("0.10");
   const [maxGrade, setMaxGrade] = useState("C");
@@ -296,7 +296,7 @@ function BidForm({
     setPlaced(false);
 
     try {
-      await api.placeBid(actor.id, auctionID, {
+      await api.placeBid(auth, auctionID, {
         budget,
         currency,
         min_yield: minYield,
@@ -370,7 +370,7 @@ function IssuerActions({
   closesAt: string;
   onDone: () => void;
 }) {
-  const { actor } = useSession();
+  const { auth } = useSession();
   const [busy, setBusy] = useState("");
   const [error, setError] = useState<unknown>(null);
   const [done, setDone] = useState("");
@@ -402,7 +402,7 @@ function IssuerActions({
           className="button is-primary"
           disabled={busy !== "" || status !== "OPEN" || stillOpen}
           title={stillOpen ? "The bidding window has not closed yet" : undefined}
-          onClick={() => act("Clearing", () => api.clearAuction(actor.id, auctionID))}
+          onClick={() => act("Clearing", () => api.clearAuction(auth, auctionID))}
         >
           {busy === "Clearing" ? "Clearing…" : "Clear batch"}
         </button>
@@ -410,7 +410,7 @@ function IssuerActions({
         <button
           className="button"
           disabled={busy !== "" || status !== "CLEARED"}
-          onClick={() => act("Settlement", () => api.settleAuction(actor.id, auctionID))}
+          onClick={() => act("Settlement", () => api.settleAuction(auth, auctionID))}
         >
           {busy === "Settlement" ? "Settling…" : "Settle allocations"}
         </button>
@@ -420,7 +420,7 @@ function IssuerActions({
           disabled={busy !== "" || (status !== "OPEN" && status !== "DRAFT")}
           onClick={() =>
             act("Cancellation", () =>
-              api.cancelAuction(actor.id, auctionID, "withdrawn from the demo"),
+              api.cancelAuction(auth, auctionID, "withdrawn from the demo"),
             )
           }
         >

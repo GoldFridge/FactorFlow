@@ -37,9 +37,9 @@ const trading = new Set(["AUCTION_OPEN", "ALLOCATED", "SETTLING"]);
  * guessing, so none is offered where the transition would be rejected.
  */
 export function Invoices() {
-  const { actor, isIssuer } = useSession();
+  const { auth, isIssuer } = useSession();
   const navigate = useNavigate();
-  const state = useAsync(() => api.invoices(actor.id), [actor.id]);
+  const state = useAsync(() => api.invoices(auth), [auth]);
 
   const [stage, setStage] = useState("all");
   const [query, setQuery] = useState("");
@@ -94,7 +94,7 @@ export function Invoices() {
     try {
       const opens = new Date();
       const closes = new Date(opens.getTime() + 24 * 3600 * 1000);
-      const auction = await api.openAuction(actor.id, {
+      const auction = await api.openAuction(auth, {
         invoice_ids: selected,
         opens_at: opens.toISOString(),
         closes_at: closes.toISOString(),
@@ -232,7 +232,7 @@ function Next({
   act: (id: string, call: () => Promise<unknown>) => Promise<void>;
   enabled: boolean;
 }) {
-  const { actor } = useSession();
+  const { auth } = useSession();
   if (!enabled) {
     return null;
   }
@@ -242,7 +242,7 @@ function Next({
       <button
         className="button is-primary"
         disabled={busy !== ""}
-        onClick={() => act(invoice.id, () => api.approveInvoice(actor.id, invoice.id))}
+        onClick={() => act(invoice.id, () => api.approveInvoice(auth, invoice.id))}
       >
         Approve price
       </button>
@@ -254,7 +254,7 @@ function Next({
       <button
         className="button is-primary"
         disabled={busy !== ""}
-        onClick={() => act(invoice.id, () => api.tokenizeInvoice(actor.id, invoice.id))}
+        onClick={() => act(invoice.id, () => api.tokenizeInvoice(auth, invoice.id))}
       >
         Mint asset
       </button>

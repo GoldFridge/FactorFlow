@@ -208,3 +208,26 @@ export interface Organization {
 export interface Items<T> {
   items: T[];
 }
+
+/** Challenge is the text a wallet is asked to sign, and the nonce that makes it one-shot. */
+export interface Challenge {
+  nonce: string;
+  message: string;
+  expires_at: string;
+}
+
+export interface Session {
+  token: string;
+  organization_id: string;
+  wallet: string;
+  expires_at: string;
+}
+
+/** Identity is what the server says about the caller it recognised. */
+export interface Identity {
+  organization_id: string;
+  wallet: string;
+  role: string;
+  eligible: boolean;
+  operator: boolean;
+}

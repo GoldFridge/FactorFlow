@@ -3,9 +3,13 @@ import type {
   Auction,
   AuditEvent,
   Bid,
+  Challenge,
+  Identity,
   Invoice,
   Items,
   MarketSnapshot,
+  Organization,
+  Session,
   Settlement,
   Solution,
 } from "./types";
@@ -31,22 +35,19 @@ export class ApiError extends Error {
 }
 
 /**
- * request sends one call as the given organization.
+ * request sends one call.
  *
- * The caller is named by a header because this build runs in development mode, where the
- * API accepts it in place of a wallet session. It is the only concession the client makes
- * to the demo: every rule behind it is the real one, and the server reads eligibility from
- * the stored organization rather than from anything sent here.
+ * A signed-in caller is carried by the session cookie the server set, which is HttpOnly and
+ * therefore unreadable here — that is the point of it. The `auth` argument is the escape
+ * hatch for a browser with no wallet: it names a seeded organization in a header the API
+ * only honours in development, and even then the server reads eligibility from the stored
+ * record rather than from anything sent here.
  */
-async function request<T>(
-  path: string,
-  actor: string,
-  init: RequestInit = {},
-): Promise<T> {
+async function request<T>(path: string, auth: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   headers.set("Accept", "application/json");
-  if (actor) {
-    headers.set("X-Demo-Organization", actor);
+  if (auth) {
+    headers.set("X-Demo-Organization", auth);
   }
   if (init.body !== undefined) {
     headers.set("Content-Type", "application/json");
@@ -55,7 +56,8 @@ async function request<T>(
     headers.set("Idempotency-Key", crypto.randomUUID());
   }
 
-  const response = await fetch(path, { ...init, headers });
+  // same-origin is the default, but the session depends on it, so it is stated.
+  const response = await fetch(path, { ...init, headers, credentials: "same-origin" });
 
   if (response.status === 204) {
     return undefined as T;
@@ -85,63 +87,94 @@ async function request<T>(
 const base = "/api/v1";
 
 export const api = {
-  invoices: (actor: string) =>
-    request<Items<Invoice>>(`${base}/invoices`, actor).then((r) => r.items),
+  /**
+   * The login exchange. A wallet asks for a challenge, signs the text it is given, and
+   * posts the signature back; the server answers with a session cookie. Nothing here ever
+   * sees a private key, and the challenge is spent by the request that verifies it.
+   */
+  challenge: (wallet: string) =>
+    request<Challenge>(`${base}/auth/challenge`, "", {
+      method: "POST",
+      body: JSON.stringify({ wallet }),
+    }),
 
-  invoice: (actor: string, id: string) => request<Invoice>(`${base}/invoices/${id}`, actor),
+  verify: (nonce: string, signature: string) =>
+    request<Session>(`${base}/auth/verify`, "", {
+      method: "POST",
+      body: JSON.stringify({ nonce, signature }),
+    }),
 
-  assessment: (actor: string, id: string) =>
-    request<Assessment>(`${base}/invoices/${id}/assessment`, actor),
+  me: (auth: string) => request<Identity>(`${base}/auth/me`, auth),
 
-  timeline: (actor: string, id: string) =>
-    request<Items<AuditEvent>>(`${base}/invoices/${id}/timeline`, actor).then((r) => r.items),
+  logout: () => request<void>(`${base}/auth/logout`, "", { method: "POST", body: "{}" }),
 
-  approveInvoice: (actor: string, id: string) =>
-    request<Invoice>(`${base}/invoices/${id}/approve`, actor, { method: "POST", body: "{}" }),
+  /** register creates the organization a proven wallet will act as. */
+  register: (nonce: string, signature: string, type: string, name: string) =>
+    request<Organization>(`${base}/organizations`, "", {
+      method: "POST",
+      body: JSON.stringify({ nonce, signature, type, name }),
+    }),
 
-  tokenizeInvoice: (actor: string, id: string) =>
-    request<Invoice>(`${base}/invoices/${id}/tokenize`, actor, { method: "POST", body: "{}" }),
+  organization: (auth: string, id: string) =>
+    request<Organization>(`${base}/organizations/${id}`, auth),
 
-  auctions: (actor: string, status?: string) =>
+  invoices: (auth: string) =>
+    request<Items<Invoice>>(`${base}/invoices`, auth).then((r) => r.items),
+
+  invoice: (auth: string, id: string) => request<Invoice>(`${base}/invoices/${id}`, auth),
+
+  assessment: (auth: string, id: string) =>
+    request<Assessment>(`${base}/invoices/${id}/assessment`, auth),
+
+  timeline: (auth: string, id: string) =>
+    request<Items<AuditEvent>>(`${base}/invoices/${id}/timeline`, auth).then((r) => r.items),
+
+  approveInvoice: (auth: string, id: string) =>
+    request<Invoice>(`${base}/invoices/${id}/approve`, auth, { method: "POST", body: "{}" }),
+
+  tokenizeInvoice: (auth: string, id: string) =>
+    request<Invoice>(`${base}/invoices/${id}/tokenize`, auth, { method: "POST", body: "{}" }),
+
+  auctions: (auth: string, status?: string) =>
     request<Items<Auction>>(
       `${base}/auctions${status ? `?status=${encodeURIComponent(status)}` : ""}`,
-      actor,
+      auth,
     ).then((r) => r.items),
 
-  auction: (actor: string, id: string) => request<Auction>(`${base}/auctions/${id}`, actor),
+  auction: (auth: string, id: string) => request<Auction>(`${base}/auctions/${id}`, auth),
 
-  bids: (actor: string, id: string) =>
-    request<Items<Bid>>(`${base}/auctions/${id}/bids`, actor).then((r) => r.items),
+  bids: (auth: string, id: string) =>
+    request<Items<Bid>>(`${base}/auctions/${id}/bids`, auth).then((r) => r.items),
 
-  allocations: (actor: string, id: string) =>
-    request<Solution>(`${base}/auctions/${id}/allocations`, actor),
+  allocations: (auth: string, id: string) =>
+    request<Solution>(`${base}/auctions/${id}/allocations`, auth),
 
-  settlements: (actor: string, id: string) =>
-    request<Items<Settlement>>(`${base}/auctions/${id}/settlements`, actor).then((r) => r.items),
+  settlements: (auth: string, id: string) =>
+    request<Items<Settlement>>(`${base}/auctions/${id}/settlements`, auth).then((r) => r.items),
 
-  placeBid: (actor: string, auctionID: string, bid: Record<string, unknown>) =>
-    request<Bid>(`${base}/auctions/${auctionID}/bids`, actor, {
+  placeBid: (auth: string, auctionID: string, bid: Record<string, unknown>) =>
+    request<Bid>(`${base}/auctions/${auctionID}/bids`, auth, {
       method: "POST",
       body: JSON.stringify(bid),
     }),
 
-  openAuction: (actor: string, body: Record<string, unknown>) =>
-    request<Auction>(`${base}/auctions`, actor, { method: "POST", body: JSON.stringify(body) }),
+  openAuction: (auth: string, body: Record<string, unknown>) =>
+    request<Auction>(`${base}/auctions`, auth, { method: "POST", body: JSON.stringify(body) }),
 
-  clearAuction: (actor: string, id: string) =>
-    request<Solution>(`${base}/auctions/${id}/clear`, actor, { method: "POST", body: "{}" }),
+  clearAuction: (auth: string, id: string) =>
+    request<Solution>(`${base}/auctions/${id}/clear`, auth, { method: "POST", body: "{}" }),
 
-  settleAuction: (actor: string, id: string) =>
-    request<Items<Settlement>>(`${base}/auctions/${id}/settle`, actor, {
+  settleAuction: (auth: string, id: string) =>
+    request<Items<Settlement>>(`${base}/auctions/${id}/settle`, auth, {
       method: "POST",
       body: "{}",
     }).then((r) => r.items),
 
-  cancelAuction: (actor: string, id: string, reason: string) =>
-    request<Auction>(`${base}/auctions/${id}/cancel`, actor, {
+  cancelAuction: (auth: string, id: string, reason: string) =>
+    request<Auction>(`${base}/auctions/${id}/cancel`, auth, {
       method: "POST",
       body: JSON.stringify({ reason }),
     }),
 
-  benchmark: (actor: string) => request<MarketSnapshot>(`${base}/market/benchmarks/latest`, actor),
+  benchmark: (auth: string) => request<MarketSnapshot>(`${base}/market/benchmarks/latest`, auth),
 };
