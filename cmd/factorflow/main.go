@@ -87,7 +87,7 @@ func seed() error {
 
 	// The seed needs a clock it can move, and the services have to read the same one, so
 	// it is chosen here and handed to the whole graph.
-	app := wire(cfg, db, clock.At(time.Now().Add(-demo.SeedHistory)))
+	app := wire(cfg, db, clock.At(time.Now().Add(-demo.SeedHistory)), demo.IDs())
 	summary, err := app.seeder.Run(ctx)
 	if err != nil {
 		return err
@@ -135,7 +135,7 @@ func run() error {
 	}
 	slog.Info("schema ready", slog.Int64("version", schemaVersion))
 
-	app := wire(cfg, db, clock.Live())
+	app := wire(cfg, db, clock.Live(), uuid.New)
 
 	// The dispatcher runs beside the server rather than in its own process: one deployable
 	// is the specification's choice, and a worker that dies with its API is easier to
@@ -187,7 +187,7 @@ type application struct {
 // Every external system is chosen here and nowhere else: with credentials the live adapter
 // is used, without them the in-process one. That is what lets the whole path be exercised
 // offline without any module knowing which it got.
-func wire(cfg config.Config, db *postgres.DB, clk *clock.Clock) *application {
+func wire(cfg config.Config, db *postgres.DB, clk *clock.Clock, ids func() uuid.UUID) *application {
 	now := clk.Now
 
 	invoices := invoice.NewPostgresRepository()
@@ -203,8 +203,8 @@ func wire(cfg config.Config, db *postgres.DB, clk *clock.Clock) *application {
 
 	market := marketdata.NewService(marketProvider(cfg), marketdata.NewNormalizer(), now)
 
-	invoiceService := invoice.NewService(db, invoices, trail, now, uuid.New)
-	auctionService := auction.NewService(db, auctions, auction.NewSolver(), trail, now, uuid.New)
+	invoiceService := invoice.NewService(db, invoices, trail, now, ids)
+	auctionService := auction.NewService(db, auctions, auction.NewSolver(), trail, now, ids)
 	marketplaceService := marketplace.NewService(marketplace.Config{
 		DB:          db,
 		Invoices:    invoices,
@@ -216,7 +216,7 @@ func wire(cfg config.Config, db *postgres.DB, clk *clock.Clock) *application {
 		Solver:      auction.NewSolver(),
 		Audit:       trail,
 		Now:         now,
-		IDs:         uuid.New,
+		IDs:         ids,
 	})
 
 	assessmentWorker := assessment.NewAssessmentWorker(assessment.WorkerConfig{
@@ -230,7 +230,7 @@ func wire(cfg config.Config, db *postgres.DB, clk *clock.Clock) *application {
 		Query:       marketQuery(cfg),
 		Audit:       trail,
 		Now:         now,
-		IDs:         uuid.New,
+		IDs:         ids,
 	})
 	issuanceWorker := issuance.NewWorker(issuance.Config{
 		DB:          db,
@@ -241,7 +241,7 @@ func wire(cfg config.Config, db *postgres.DB, clk *clock.Clock) *application {
 		Issuer:      assetIssuer(cfg),
 		Audit:       trail,
 		Now:         now,
-		IDs:         uuid.New,
+		IDs:         ids,
 	})
 
 	// The settlement saga runs off the outbox like the other workers: a transfer that
@@ -267,7 +267,7 @@ func wire(cfg config.Config, db *postgres.DB, clk *clock.Clock) *application {
 		// eligibility on registration. Anywhere else it is an operator's decision.
 		AutoApprove: cfg.DemoAuthEnabled(),
 		Now:         now,
-		IDs:         uuid.New,
+		IDs:         ids,
 	})
 	// The machine-facing endpoints. They read the same published model and stored market as
 	// the rest of the platform, so an agent's quote and an issuer's price cannot disagree.
@@ -287,7 +287,7 @@ func wire(cfg config.Config, db *postgres.DB, clk *clock.Clock) *application {
 		Recipient:   cfg.Paid.Recipient,
 		Asset:       cfg.Paid.Asset,
 		Now:         now,
-		IDs:         uuid.New,
+		IDs:         ids,
 	})
 
 	reportingService := reporting.NewService(reporting.Config{

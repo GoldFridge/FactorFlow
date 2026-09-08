@@ -13,6 +13,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"strconv"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -101,6 +103,31 @@ var (
 	InvestorAID = uuid.MustParse("00000000-0000-4000-8000-000000000004")
 	InvestorBID = uuid.MustParse("00000000-0000-4000-8000-000000000005")
 )
+
+// idNamespace anchors the seeded identifiers. It is an arbitrary constant; what matters is
+// that it never changes, so a reseeded demo is byte-for-byte the one that was rehearsed.
+var idNamespace = uuid.MustParse("6f9619ff-8b86-d011-b42d-00c04fc964ff")
+
+// IDs returns the identifier source the seed path wires into the services.
+//
+// Seeded identifiers are derived rather than random for a reason beyond tidiness: the
+// confidential workflow derives an invoice's features from its identifier, so random ids
+// would give every seed a different risk grade — and a demo whose auction clears only on
+// some runs is worse than no demo. Deriving them makes the whole dataset, prices included,
+// the same one every time.
+func IDs() func() uuid.UUID {
+	var (
+		mu sync.Mutex
+		n  int
+	)
+	return func() uuid.UUID {
+		mu.Lock()
+		defer mu.Unlock()
+
+		n++
+		return uuid.NewSHA1(idNamespace, []byte(strconv.Itoa(n)))
+	}
+}
 
 // participant is one seeded organization.
 type participant struct {
@@ -311,7 +338,10 @@ func (s *Seeder) bid(ctx context.Context, a *auction.Auction) (int, error) {
 		maxGrade string
 		budget   string
 	}{
-		{InvestorAID, "0.06", "C", "40000.00"},
+		// The first mandate is deliberately broad, so the batch demonstrates clearing
+		// rather than the seed's luck with a grade. The second is too demanding to fill,
+		// which is what makes the rejection reason worth showing.
+		{InvestorAID, "0.06", "E", "40000.00"},
 		{InvestorBID, "0.45", "A", "25000.00"},
 	}
 

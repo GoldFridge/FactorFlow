@@ -43,6 +43,9 @@ func wire(t *testing.T, db *postgres.DB) (*demo.Seeder, *marketplace.Service) {
 	// finished batch in the past without any rule being relaxed for it.
 	clk := clock.At(time.Now().Add(-demo.SeedHistory))
 	now := clk.Now
+	// Derived identifiers, for the same reason the server's seed path uses them: the risk
+	// grade follows from the invoice id, so random ids would make this test flaky.
+	ids := demo.IDs()
 	invoices := invoice.NewPostgresRepository()
 	assessments := risk.NewPostgresRepository()
 	snapshots := marketdata.NewPostgresRepository()
@@ -55,23 +58,23 @@ func wire(t *testing.T, db *postgres.DB) (*demo.Seeder, *marketplace.Service) {
 	market := marketdata.NewService(
 		marketdata.NewStaticProvider(marketdata.DemoMarkets()...), marketdata.NewNormalizer(), now)
 
-	invoiceService := invoice.NewService(db, invoices, trail, now, uuid.New)
-	auctionService := auction.NewService(db, auctions, auction.NewSolver(), trail, now, uuid.New)
+	invoiceService := invoice.NewService(db, invoices, trail, now, ids)
+	auctionService := auction.NewService(db, auctions, auction.NewSolver(), trail, now, ids)
 	marketplaceService := marketplace.NewService(marketplace.Config{
 		DB: db, Invoices: invoices, Assessments: assessments, Assets: assets,
 		Auctions: auctions, Settlements: settlements, Wallets: wallets{repo: organizations},
-		Solver: auction.NewSolver(), Audit: trail, Now: now, IDs: uuid.New,
+		Solver: auction.NewSolver(), Audit: trail, Now: now, IDs: ids,
 	})
 
 	assessmentWorker := assessment.NewAssessmentWorker(assessment.WorkerConfig{
 		DB: db, Invoices: invoices, Assessments: assessments, Snapshots: snapshots,
 		Market: market, Workflow: risk.NewDeterministicWorkflow(), Model: risk.ModelV1(),
-		Query: marketdata.DemoQuery(), Audit: trail, Now: now, IDs: uuid.New,
+		Query: marketdata.DemoQuery(), Audit: trail, Now: now, IDs: ids,
 	})
 	issuanceWorker := issuance.NewWorker(issuance.Config{
 		DB: db, Invoices: invoices, Assessments: assessments, Assets: assets,
 		Wallets: wallets{repo: organizations}, Issuer: tokenization.NewLocalIssuer(),
-		Audit: trail, Now: now, IDs: uuid.New,
+		Audit: trail, Now: now, IDs: ids,
 	})
 	settlementWorker := marketplace.NewSettlementWorker(
 		marketplaceService, settlement.NewLocalExecutor(now), assets)
