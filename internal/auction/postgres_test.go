@@ -347,3 +347,34 @@ func TestAuctionNeedsAKnownIssuer(t *testing.T) {
 	err := auction.NewPostgresRepository().CreateAuction(context.Background(), db.Querier(), a)
 	require.ErrorIs(t, err, apperr.ErrConflict)
 }
+
+// TestListingOfAnInvoice covers the question the venue asks about a receivable: which batch
+// is it in, and does that batch stand on the board yet. It is answered in SQL across two
+// tables, which is exactly the kind of thing an in-memory fake cannot vouch for.
+func TestListingOfAnInvoice(t *testing.T) {
+	db := pgtest.New(t)
+	ctx := context.Background()
+	repo := auction.NewPostgresRepository()
+
+	issuerID := seedIssuer(t, db, 21)
+	a := storedAuction(t, db, issuerID, 21)
+	require.NoError(t, repo.CreateAuction(ctx, db.Querier(), a))
+
+	listing, err := repo.ListingOf(ctx, db.Querier(), a.Lots[0].InvoiceID)
+	require.NoError(t, err)
+	assert.Equal(t, a.ID, listing.AuctionID)
+	assert.Equal(t, a.Lots[0].ID, listing.LotID)
+	assert.Equal(t, auction.StatusDraft, listing.Status)
+	assert.False(t, listing.Disclosed(), "a draft batch was never offered to anyone")
+
+	require.NoError(t, a.Open(testOpens))
+	require.NoError(t, repo.UpdateAuction(ctx, db.Querier(), a, 1))
+
+	listing, err = repo.ListingOf(ctx, db.Querier(), a.Lots[0].InvoiceID)
+	require.NoError(t, err)
+	assert.Equal(t, auction.StatusOpen, listing.Status)
+	assert.True(t, listing.Disclosed())
+
+	_, err = repo.ListingOf(ctx, db.Querier(), uuid.New())
+	require.ErrorIs(t, err, apperr.ErrNotFound, "a receivable nobody listed has no listing")
+}

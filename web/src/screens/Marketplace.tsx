@@ -167,7 +167,7 @@ export function Marketplace() {
                   <span className="cell-actions">
                     <IconButton
                       label="Why this price"
-                      onClick={() => navigate(`/invoices/${lot.invoice_id}`)}
+                      onClick={() => navigate(`/listings/${lot.invoice_id}`)}
                     >
                       <Pulse />
                     </IconButton>

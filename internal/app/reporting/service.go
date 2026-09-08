@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/GoldFridge/factorflow/internal/auction"
 	"github.com/GoldFridge/factorflow/internal/invoice"
 	"github.com/GoldFridge/factorflow/internal/marketdata"
 	"github.com/GoldFridge/factorflow/internal/platform/apperr"
@@ -30,6 +31,16 @@ type Actor struct {
 	Operator       bool
 }
 
+// Listings answers whether a receivable was offered to the venue, and in which batch.
+//
+// It is the whole of what this service needs from the auction module: the question here is
+// not how a batch clears but whether a bidder was asked to price this paper, because that
+// is what turns the issuer's private receivable into something a stranger may read the
+// terms of.
+type Listings interface {
+	ListingOf(ctx context.Context, q postgres.Querier, invoiceID uuid.UUID) (auction.Listing, error)
+}
+
 // Service reads assessments and market snapshots back.
 type Service struct {
 	db          TxRunner
@@ -37,6 +48,7 @@ type Service struct {
 	assessments risk.Repository
 	snapshots   marketdata.Repository
 	timeline    audit.Reader
+	listings    Listings
 	market      marketdata.Query
 }
 
@@ -49,6 +61,9 @@ type Config struct {
 	// Timeline reads the audit trail back. It is optional: a deployment without one still
 	// answers every other question, it just cannot show the history.
 	Timeline audit.Reader
+	// Listings is optional too, and leaving it out is the closed position: without it
+	// nothing is ever disclosed beyond the issuer.
+	Listings Listings
 	// Market names the question this deployment prices against, so the latest snapshot can
 	// be found without the caller knowing how it was taken.
 	Market marketdata.Query
@@ -62,6 +77,7 @@ func NewService(cfg Config) *Service {
 		assessments: cfg.Assessments,
 		snapshots:   cfg.Snapshots,
 		timeline:    cfg.Timeline,
+		listings:    cfg.Listings,
 		market:      cfg.Market,
 	}
 }
@@ -78,19 +94,99 @@ type Report struct {
 	Contributions []risk.Contribution
 }
 
+// Disclosure is one listed receivable as a participant of the venue may read it.
+//
+// It carries the terms that were put on the board and the reasoning behind the price, and
+// deliberately not the document, its metadata or the issuer's own history: what is
+// disclosed is what a bidder was asked to price, and nothing beyond it.
+type Disclosure struct {
+	Invoice *invoice.Invoice
+	Listing auction.Listing
+	// Report is absent when the assessment behind the listing is no longer on record. The
+	// terms still stand, so a missing explanation must not hide them.
+	Report *Report
+	// Own reports whether the caller is the issuer of this receivable, which is the one
+	// case where a fuller record exists elsewhere.
+	Own bool
+}
+
+// ListingFor returns what a participant may read about a receivable that was offered.
+//
+// This is the answer to a bidder's question "what am I pricing", and it exists because the
+// issuer's own record cannot be that answer: an invoice belongs to its issuer, and the
+// terms of a lot belong to the venue it was offered in.
+func (s *Service) ListingFor(ctx context.Context, actor Actor, invoiceID uuid.UUID) (*Disclosure, error) {
+	if actor.OrganizationID == uuid.Nil && !actor.Operator {
+		return nil, apperr.Forbiddenf("authentication is required to view a listing")
+	}
+
+	inv, err := s.invoices.Get(ctx, s.db.Querier(), invoiceID)
+	if err != nil {
+		return nil, err
+	}
+
+	listing, own, err := s.readable(ctx, actor, inv)
+	if err != nil {
+		return nil, err
+	}
+
+	out := &Disclosure{Invoice: inv, Listing: listing, Own: own}
+
+	// The price is best-effort for the same reason the snapshot is inside a report: the
+	// terms of the lot are the disclosure, and an assessment that was never made or no
+	// longer exists should leave them readable rather than turn them into a refusal.
+	report, err := s.reportFor(ctx, inv.ID)
+	if err != nil && !apperr.IsNotFound(err) {
+		return nil, err
+	}
+	out.Report = report
+	return out, nil
+}
+
 // AssessmentFor returns the latest assessment of an invoice the caller may see.
 func (s *Service) AssessmentFor(ctx context.Context, actor Actor, invoiceID uuid.UUID) (*Report, error) {
 	inv, err := s.invoices.Get(ctx, s.db.Querier(), invoiceID)
 	if err != nil {
 		return nil, err
 	}
-	if !actor.Operator && inv.IssuerID != actor.OrganizationID {
-		// An assessment describes a private document's risk. Telling a stranger it exists
-		// is itself a disclosure, so the answer is that the invoice does not exist.
-		return nil, apperr.NotFoundf("invoice %s", invoiceID)
+	if _, _, err := s.readable(ctx, actor, inv); err != nil {
+		return nil, err
 	}
 
-	assessment, err := s.assessments.Latest(ctx, s.db.Querier(), inv.ID)
+	return s.reportFor(ctx, inv.ID)
+}
+
+// readable decides who may read a receivable, and reports what made it readable.
+//
+// The issuer and an operator may always look. Everyone else may look only at paper that
+// was offered to the venue, and only once the batch left draft — bidding against terms
+// nobody may read is not a market. Anyone else is told the invoice does not exist, because
+// confirming that it does is itself the disclosure.
+func (s *Service) readable(ctx context.Context, actor Actor, inv *invoice.Invoice) (auction.Listing, bool, error) {
+	own := inv.IssuerID == actor.OrganizationID
+
+	listing, err := s.listingOf(ctx, inv.ID)
+	if err != nil && !apperr.IsNotFound(err) {
+		return auction.Listing{}, own, err
+	}
+
+	if own || actor.Operator || listing.Disclosed() {
+		return listing, own, nil
+	}
+	return auction.Listing{}, own, apperr.NotFoundf("invoice %s", inv.ID)
+}
+
+// listingOf reports where a receivable was offered, or that it was not.
+func (s *Service) listingOf(ctx context.Context, invoiceID uuid.UUID) (auction.Listing, error) {
+	if s.listings == nil {
+		return auction.Listing{}, apperr.NotFoundf("listing of invoice %s", invoiceID)
+	}
+	return s.listings.ListingOf(ctx, s.db.Querier(), invoiceID)
+}
+
+// reportFor assembles the price and the market it was taken against.
+func (s *Service) reportFor(ctx context.Context, invoiceID uuid.UUID) (*Report, error) {
+	assessment, err := s.assessments.Latest(ctx, s.db.Querier(), invoiceID)
 	if err != nil {
 		return nil, err
 	}

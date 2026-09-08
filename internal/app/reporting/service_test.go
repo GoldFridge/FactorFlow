@@ -54,6 +54,7 @@ func newFixture(t *testing.T) *fixture {
 		Assessments: store.Assessments(),
 		Snapshots:   store.Snapshots(),
 		Timeline:    store.Audit(),
+		Listings:    store.Auctions(),
 		Market:      marketdata.DemoQuery(),
 	})
 

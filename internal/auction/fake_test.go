@@ -165,6 +165,20 @@ func (m *memRepository) ListAuctions(_ context.Context, _ postgres.Querier, stat
 	return out, nil
 }
 
+func (m *memRepository) ListingOf(_ context.Context, _ postgres.Querier, invoiceID uuid.UUID) (auction.Listing, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for _, stored := range m.auctions {
+		for _, lot := range stored.Lots {
+			if lot.InvoiceID == invoiceID {
+				return auction.Listing{AuctionID: stored.ID, LotID: lot.ID, Status: stored.Status}, nil
+			}
+		}
+	}
+	return auction.Listing{}, apperr.NotFoundf("listing of invoice %s", invoiceID)
+}
+
 func (m *memRepository) CreateBid(_ context.Context, _ postgres.Querier, b *auction.Bid) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

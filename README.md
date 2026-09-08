@@ -215,6 +215,21 @@ stored document, and neither can a backup or a leak. With a confidential workflo
 it the key would be wrapped to the enclave's public key instead, which is the one party meant
 to read a document, and still not this server.
 
+## What a bidder may read
+
+An invoice belongs to its issuer: `GET /invoices/{id}` answers "not found" to everyone else,
+and the refusal deliberately does not distinguish a receivable that is not yours from one
+that does not exist.
+
+Offering the paper in a batch changes that question. An investor is asked for money against
+terms, and terms nobody may read are not a market, so `GET /listings/{invoiceID}` discloses
+what was put on the board: the terms of the lot, the published price with its decomposition,
+the market snapshot the benchmark came from, and the commitment tying that score to the
+document. It stops there — no document, no object key, no history, no version — and it opens
+only once the batch has left DRAFT, because a draft can still be abandoned without anyone
+ever having been asked to price it. In the interface this is the "why this price" link on the
+board, and a stranger who lands on `/invoices/{id}` is handed over to it.
+
 ## Reseeding
 
 Stop the server before seeding. Both processes run the same outbox dispatcher, and a running

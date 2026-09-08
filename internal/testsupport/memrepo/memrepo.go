@@ -639,6 +639,38 @@ func (r *auctionRepo) ListAuctions(_ context.Context, _ postgres.Querier, status
 	return truncate(out, limit), nil
 }
 
+func (r *auctionRepo) ListingOf(_ context.Context, _ postgres.Querier, invoiceID uuid.UUID) (auction.Listing, error) {
+	s := r.store()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var found []auction.Auction
+	for _, stored := range s.auctions {
+		for _, lot := range stored.Lots {
+			if lot.InvoiceID == invoiceID {
+				found = append(found, stored)
+			}
+		}
+	}
+	if len(found) == 0 {
+		return auction.Listing{}, apperr.NotFoundf("listing of invoice %s", invoiceID)
+	}
+
+	// Newest first, matching the stored repository: a relisted receivable is described by
+	// the batch it stands in now.
+	sort.Slice(found, func(i, j int) bool { return found[i].CreatedAt.After(found[j].CreatedAt) })
+	newest := found[0]
+
+	listing := auction.Listing{AuctionID: newest.ID, Status: newest.Status}
+	for _, lot := range newest.Lots {
+		if lot.InvoiceID == invoiceID {
+			listing.LotID = lot.ID
+			break
+		}
+	}
+	return listing, nil
+}
+
 func (r *auctionRepo) CreateBid(_ context.Context, _ postgres.Querier, b *auction.Bid) error {
 	s := r.store()
 	s.mu.Lock()

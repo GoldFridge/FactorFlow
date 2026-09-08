@@ -39,6 +39,26 @@ type Lot struct {
 	TenorDays    int64
 }
 
+// Listing is the fact that a receivable was put in front of the venue.
+//
+// It exists because "who may look at this receivable" stops being the issuer's private
+// answer the moment the paper is offered: a bidder is asked for money against terms it is
+// not allowed to read otherwise. The listing is what the readers outside this module ask
+// about, and it says nothing about the document — only that the lot is on the board.
+type Listing struct {
+	AuctionID uuid.UUID
+	LotID     uuid.UUID
+	Status    Status
+}
+
+// Disclosed reports whether the batch has actually reached the board.
+//
+// A draft is still the issuer's own working set: it can be edited or abandoned without
+// anyone ever having been asked to price it, so nothing in it is disclosed yet.
+// A receivable that was never listed has no status at all, and the zero listing must not
+// read as an open one.
+func (l Listing) Disclosed() bool { return l.Status.IsValid() && l.Status != StatusDraft }
+
 // Bid is one investor's constrained offer over the whole batch.
 type Bid struct {
 	ID         uuid.UUID

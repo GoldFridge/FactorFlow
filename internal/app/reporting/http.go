@@ -32,7 +32,77 @@ func NewHandler(service *Service, now func() time.Time) *Handler {
 func (h *Handler) Routes(r chi.Router) {
 	r.Get("/invoices/{invoiceID}/assessment", h.assessment)
 	r.Get("/invoices/{invoiceID}/timeline", h.timeline)
+	r.Get("/listings/{invoiceID}", h.listing)
 	r.Get("/market/benchmarks/latest", h.benchmark)
+}
+
+// listingResponse is one offered receivable as the venue may read it.
+//
+// The fields are chosen by what a bidder is being asked to price: the terms of the paper,
+// who is selling it, the asset it was minted as, and the price with its reasoning. What is
+// absent is absent on purpose — no document, no object key, no history, no version — so
+// this endpoint cannot quietly become a way around the invoice module's own rule.
+type listingResponse struct {
+	InvoiceID string `json:"invoice_id"`
+	IssuerID  string `json:"issuer_id"`
+	Number    string `json:"number"`
+	DebtorRef string `json:"debtor_ref"`
+	Face      string `json:"face"`
+	Currency  string `json:"currency"`
+	IssuedAt  string `json:"issued_at"`
+	DueAt     string `json:"due_at"`
+	TenorDays int64  `json:"tenor_days"`
+	Status    string `json:"status"`
+	AssetID   string `json:"asset_id,omitempty"`
+
+	AuctionID     string `json:"auction_id,omitempty"`
+	AuctionStatus string `json:"auction_status,omitempty"`
+	// Own tells the reader that a fuller record of this receivable is theirs to open.
+	Own bool `json:"own"`
+
+	Assessment *assessmentResponse `json:"assessment,omitempty"`
+}
+
+func (h *Handler) listing(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "invoiceID"))
+	if err != nil {
+		httpserver.WriteProblem(w, r, apperr.Invalid("invoice_id", "must be a UUID"))
+		return
+	}
+
+	disclosed, err := h.service.ListingFor(r.Context(), actorOf(r), id)
+	if err != nil {
+		httpserver.WriteProblem(w, r, err)
+		return
+	}
+
+	inv := disclosed.Invoice
+	out := listingResponse{
+		InvoiceID: inv.ID.String(),
+		IssuerID:  inv.IssuerID.String(),
+		Number:    inv.Number,
+		DebtorRef: inv.DebtorRef,
+		Face:      inv.Face.String(),
+		Currency:  inv.Face.Currency().String(),
+		IssuedAt:  inv.IssuedAt.Format(time.RFC3339),
+		DueAt:     inv.DueAt.Format(time.RFC3339),
+		TenorDays: inv.TenorDays(),
+		Status:    inv.Status.String(),
+		Own:       disclosed.Own,
+	}
+	if inv.AssetID != uuid.Nil {
+		out.AssetID = inv.AssetID.String()
+	}
+	if disclosed.Listing.AuctionID != uuid.Nil {
+		out.AuctionID = disclosed.Listing.AuctionID.String()
+		out.AuctionStatus = disclosed.Listing.Status.String()
+	}
+	if disclosed.Report != nil {
+		assessment := h.toAssessmentResponse(disclosed.Report)
+		out.Assessment = &assessment
+	}
+
+	httpserver.WriteJSON(w, r, http.StatusOK, out)
 }
 
 // assessmentResponse is the wire shape of one price and its reasoning.

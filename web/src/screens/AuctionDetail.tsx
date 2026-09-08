@@ -87,7 +87,7 @@ export function AuctionDetail() {
                       <td className="num">{lot.tenor_days} d</td>
                       <td className="num">{percent(lot.implied_yield)}</td>
                       <td className="num">
-                        <Link className="small" to={`/invoices/${lot.invoice_id}`}>
+                        <Link className="small" to={`/listings/${lot.invoice_id}`}>
                           why this price →
                         </Link>
                       </td>

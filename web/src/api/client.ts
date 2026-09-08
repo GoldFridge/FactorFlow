@@ -7,6 +7,7 @@ import type {
   Identity,
   Invoice,
   Items,
+  Listing,
   MarketSnapshot,
   Organization,
   Session,
@@ -149,6 +150,14 @@ export const api = {
 
   assessment: (auth: string, id: string) =>
     request<Assessment>(`${base}/invoices/${id}/assessment`, auth),
+
+  /**
+   * What a participant of the venue may read about a receivable that was offered to it.
+   * This is the call behind a lot on the board: the issuer's own record answers 404 to
+   * everyone else, and rightly so.
+   */
+  listing: (auth: string, invoiceID: string) =>
+    request<Listing>(`${base}/listings/${invoiceID}`, auth),
 
   timeline: (auth: string, id: string) =>
     request<Items<AuditEvent>>(`${base}/invoices/${id}/timeline`, auth).then((r) => r.items),

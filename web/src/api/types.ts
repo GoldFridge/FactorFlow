@@ -27,6 +27,32 @@ export interface Invoice {
   updated_at: string;
 }
 
+/**
+ * Listing is one offered receivable as the venue may read it.
+ *
+ * It is deliberately less than an Invoice: a bidder is shown the terms it is being asked
+ * to price and the reasoning behind that price, and not the seller's own record of the
+ * paper — no document, no history, no version to write against.
+ */
+export interface Listing {
+  invoice_id: string;
+  issuer_id: string;
+  number: string;
+  debtor_ref: string;
+  face: string;
+  currency: string;
+  issued_at: string;
+  due_at: string;
+  tenor_days: number;
+  status: string;
+  asset_id?: string;
+  auction_id?: string;
+  auction_status?: string;
+  /** own tells the reader that the fuller record of this receivable is theirs to open. */
+  own: boolean;
+  assessment?: Assessment;
+}
+
 export interface Lot {
   id: string;
   invoice_id: string;

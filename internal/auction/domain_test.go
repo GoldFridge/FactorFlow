@@ -249,3 +249,31 @@ func fieldNames(fields []*apperr.FieldError) []string {
 	}
 	return names
 }
+
+/*
+ * TestListingDisclosure fixes the rule the read side leans on. Being in a batch is not the
+ * same as having been offered: a draft can still be edited or abandoned, and a receivable
+ * that was never listed at all must not read as an open one just because the zero value of
+ * a status is not the word DRAFT.
+ */
+func TestListingDisclosure(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		status    auction.Status
+		disclosed bool
+	}{
+		{"", false},
+		{auction.StatusDraft, false},
+		{auction.StatusOpen, true},
+		{auction.StatusClearing, true},
+		{auction.StatusCleared, true},
+		{auction.StatusSettled, true},
+		{auction.StatusCancelled, true},
+	}
+
+	for _, tc := range cases {
+		listing := auction.Listing{AuctionID: uuid.New(), LotID: uuid.New(), Status: tc.status}
+		assert.Equal(t, tc.disclosed, listing.Disclosed(), "status %q", tc.status)
+	}
+}

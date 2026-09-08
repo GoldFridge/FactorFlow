@@ -2,6 +2,7 @@ import { NavLink, Route, Routes } from "react-router-dom";
 
 import { AuctionDetail } from "./screens/AuctionDetail";
 import { InvoiceDetail } from "./screens/InvoiceDetail";
+import { Listing } from "./screens/Listing";
 import { Invoices } from "./screens/Invoices";
 import { Market } from "./screens/Market";
 import { Marketplace } from "./screens/Marketplace";
@@ -40,6 +41,7 @@ export function App() {
           <Route path="/invoices" element={<Invoices />} />
           <Route path="/invoices/new" element={<NewInvoice />} />
           <Route path="/invoices/:id" element={<InvoiceDetail />} />
+          <Route path="/listings/:id" element={<Listing />} />
           <Route path="/market" element={<Market />} />
           <Route path="*" element={<p className="empty">That page does not exist.</p>} />
         </Routes>

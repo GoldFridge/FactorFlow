@@ -22,6 +22,7 @@ type Repository interface {
 	GetAuction(ctx context.Context, q postgres.Querier, id uuid.UUID) (*Auction, error)
 	UpdateAuction(ctx context.Context, q postgres.Querier, a *Auction, expectedVersion int64) error
 	ListAuctions(ctx context.Context, q postgres.Querier, status Status, limit int) ([]*Auction, error)
+	ListingOf(ctx context.Context, q postgres.Querier, invoiceID uuid.UUID) (Listing, error)
 
 	CreateBid(ctx context.Context, q postgres.Querier, b *Bid) error
 	GetBid(ctx context.Context, q postgres.Querier, id uuid.UUID) (*Bid, error)
@@ -163,6 +164,36 @@ func (r *PostgresRepository) ListAuctions(ctx context.Context, q postgres.Querie
 		a.Lots = lots
 	}
 	return out, nil
+}
+
+// ListingOf returns the batch a receivable was offered in.
+//
+// The newest batch wins, because a receivable that was pulled from a cancelled batch and
+// relisted is described by where it stands now, not by where it has been.
+func (r *PostgresRepository) ListingOf(ctx context.Context, q postgres.Querier, invoiceID uuid.UUID) (Listing, error) {
+	const query = `
+		SELECT l.id, l.auction_id, a.status
+		  FROM auction_lots l
+		  JOIN auctions a ON a.id = l.auction_id
+		 WHERE l.invoice_id = $1
+		 ORDER BY a.created_at DESC, a.id
+		 LIMIT 1`
+
+	var listing Listing
+	var status string
+	err := q.QueryRow(ctx, query, invoiceID).Scan(&listing.LotID, &listing.AuctionID, &status)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Listing{}, apperr.NotFoundf("listing of invoice %s", invoiceID)
+		}
+		return Listing{}, postgres.Translate(err)
+	}
+
+	listing.Status, err = ParseStatus(status)
+	if err != nil {
+		return Listing{}, err
+	}
+	return listing, nil
 }
 
 func (r *PostgresRepository) listLots(ctx context.Context, q postgres.Querier, auctionID uuid.UUID) ([]Lot, error) {

@@ -307,6 +307,7 @@ func wire(cfg config.Config, db *postgres.DB, clk *clock.Clock, ids func() uuid.
 		Assessments: assessments,
 		Snapshots:   snapshots,
 		Timeline:    trail,
+		Listings:    auctions,
 		Market:      marketQuery(cfg),
 	})
 
