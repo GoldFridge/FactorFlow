@@ -18,6 +18,7 @@ import (
 
 	"github.com/GoldFridge/factorflow/internal/app/agents"
 	"github.com/GoldFridge/factorflow/internal/app/assessment"
+	"github.com/GoldFridge/factorflow/internal/app/demo"
 	"github.com/GoldFridge/factorflow/internal/app/issuance"
 	"github.com/GoldFridge/factorflow/internal/app/marketplace"
 	"github.com/GoldFridge/factorflow/internal/app/onboarding"
@@ -29,6 +30,7 @@ import (
 	"github.com/GoldFridge/factorflow/internal/organization"
 	"github.com/GoldFridge/factorflow/internal/payments"
 	"github.com/GoldFridge/factorflow/internal/platform/audit"
+	"github.com/GoldFridge/factorflow/internal/platform/clock"
 	"github.com/GoldFridge/factorflow/internal/platform/config"
 	"github.com/GoldFridge/factorflow/internal/platform/httpserver"
 	"github.com/GoldFridge/factorflow/internal/platform/idempotency"
@@ -44,12 +46,64 @@ import (
 var version = "dev"
 
 func main() {
-	if err := run(); err != nil {
+	if err := dispatch(os.Args[1:]); err != nil {
 		// The logger may not exist yet when configuration fails, so this one failure path
 		// writes plainly to stderr.
 		fmt.Fprintf(os.Stderr, "factorflow: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// dispatch picks what this invocation does. The seed shares the server's object graph
+// rather than reimplementing it, so seeded data is produced by the code being demonstrated.
+func dispatch(args []string) error {
+	if len(args) > 0 && args[0] == "seed" {
+		return seed()
+	}
+	return run()
+}
+
+// seed builds the demo dataset and exits.
+func seed() error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.LogLevel})))
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	db, err := postgres.Connect(ctx, postgres.DefaultConfig(cfg.DatabaseURL))
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	if err := postgres.Migrate(ctx, db); err != nil {
+		return err
+	}
+
+	// The seed needs a clock it can move, and the services have to read the same one, so
+	// it is chosen here and handed to the whole graph.
+	app := wire(cfg, db, clock.At(time.Now().Add(-demo.SeedHistory)))
+	summary, err := app.seeder.Run(ctx)
+	if err != nil {
+		return err
+	}
+	if summary.Skipped {
+		slog.Info("demo data already present; nothing was created")
+		return nil
+	}
+
+	slog.Info("demo data ready",
+		slog.Int("organizations", summary.Organizations),
+		slog.Int("invoices", summary.Invoices),
+		slog.Int("auctions", summary.Auctions),
+		slog.Int("bids", summary.Bids),
+		slog.Int("settlements", summary.Settlements))
+	return nil
 }
 
 func run() error {
@@ -81,7 +135,7 @@ func run() error {
 	}
 	slog.Info("schema ready", slog.Int64("version", schemaVersion))
 
-	app := wire(cfg, db)
+	app := wire(cfg, db, clock.Live())
 
 	// The dispatcher runs beside the server rather than in its own process: one deployable
 	// is the specification's choice, and a worker that dies with its API is easier to
@@ -125,6 +179,7 @@ func run() error {
 type application struct {
 	router     http.Handler
 	dispatcher *outbox.Dispatcher
+	seeder     *demo.Seeder
 }
 
 // wire builds the object graph.
@@ -132,8 +187,8 @@ type application struct {
 // Every external system is chosen here and nowhere else: with credentials the live adapter
 // is used, without them the in-process one. That is what lets the whole path be exercised
 // offline without any module knowing which it got.
-func wire(cfg config.Config, db *postgres.DB) *application {
-	now := time.Now
+func wire(cfg config.Config, db *postgres.DB, clk *clock.Clock) *application {
+	now := clk.Now
 
 	invoices := invoice.NewPostgresRepository()
 	assessments := risk.NewPostgresRepository()
@@ -285,7 +340,17 @@ func wire(cfg config.Config, db *postgres.DB) *application {
 		},
 	})
 
-	return &application{router: router, dispatcher: dispatcher}
+	seeder := demo.NewSeeder(demo.Config{
+		DB:            db,
+		Organizations: organizations,
+		Invoices:      invoiceService,
+		Marketplace:   marketplaceService,
+		Auctions:      auctionService,
+		Dispatcher:    dispatcher,
+		Clock:         clk,
+	})
+
+	return &application{router: router, dispatcher: dispatcher, seeder: seeder}
 }
 
 // organizationAccounts answers identity's one question about an organization: which one a
