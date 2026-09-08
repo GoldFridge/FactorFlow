@@ -1054,3 +1054,59 @@ th.num {
   font-size: 11px;
   color: var(--text-faint);
 }
+
+/* ---------------------------------------------------------------- wallets */
+
+.wallet-list {
+  display: grid;
+  gap: 8px;
+}
+
+/**
+ * One row per wallet that announced itself. The icon is the wallet's own, because a person
+ * recognises MetaMask's fox faster than they read the word.
+ */
+.wallet-option {
+  display: grid;
+  grid-template-columns: 28px 1fr 16px;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  cursor: pointer;
+  text-align: left;
+}
+
+.wallet-option:hover:not(:disabled) {
+  border-color: var(--accent-line);
+}
+
+.wallet-option:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.wallet-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  object-fit: contain;
+  background: var(--surface-3);
+}
+
+.wallet-icon.is-letter {
+  display: grid;
+  place-items: center;
+  font-weight: 660;
+  color: var(--text-muted);
+}
+
+.wallet-name {
+  font-weight: 560;
+}
+
+.wallet-go {
+  color: var(--text-faint);
+}

@@ -156,6 +156,12 @@ the browser never holds a key, and the session cookie it gets back is HttpOnly. 
 no organization behind it is offered registration rather than an error, because the refusal
 only arrives after the signature has proved who is asking.
 
+Wallets are discovered through EIP-6963 rather than through `window.ethereum`. Every injected
+wallet used to claim that one global, so with two installed the last to load won and the
+other was unreachable — someone with MetaMask and Binance Wallet could find themselves
+permanently connected to whichever injected second. Each wallet now announces itself, the
+sign-in screen lists them, and the choice is the person's.
+
 A browser with no injected wallet falls back to naming a seeded participant in a header the
 API honours only in development. Even then the server reads what that organization may do
 from its own record, so the shortcut can never grant more than a real session would.

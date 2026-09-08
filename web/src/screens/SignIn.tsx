@@ -2,7 +2,7 @@ import { useState } from "react";
 
 import { Failure } from "../components";
 import { participants, useSession } from "../session";
-import { WalletError } from "../wallet";
+import { WalletError, type Wallet } from "../wallet";
 
 /**
  * The way in.
@@ -13,7 +13,7 @@ import { WalletError } from "../wallet";
  * is no account to lose.
  */
 export function SignIn() {
-  const { stage, walletAvailable, connect, busy, error } = useSession();
+  const { stage, wallets, connect, busy, error } = useSession();
 
   if (stage === "unregistered") {
     return <Register />;
@@ -33,15 +33,47 @@ export function SignIn() {
 
         <Refusal error={error} />
 
-        {walletAvailable ? (
-          <button className="button is-primary gate-action" disabled={busy} onClick={connect}>
-            {busy ? "Waiting for the wallet…" : "Connect wallet"}
-          </button>
-        ) : (
+        {wallets.length === 0 ? (
           <NoWallet />
+        ) : (
+          <div className="wallet-list">
+            {wallets.map((option) => (
+              <button
+                key={option.id}
+                className="wallet-option"
+                disabled={busy}
+                onClick={() => void connect(option.id)}
+              >
+                <Badge wallet={option} />
+                <span className="wallet-name">{option.name}</span>
+                <span className="wallet-go" aria-hidden="true">
+                  →
+                </span>
+              </button>
+            ))}
+          </div>
         )}
+
+        {wallets.length > 1 ? (
+          <p className="faint small" style={{ marginTop: 14, marginBottom: 0 }}>
+            More than one wallet is installed. Each announced itself, so the choice is yours
+            rather than whichever loaded last.
+          </p>
+        ) : null}
       </div>
     </div>
+  );
+}
+
+/** Badge shows the wallet's own icon, or its initial when it announced none. */
+function Badge({ wallet }: { wallet: Wallet }) {
+  if (wallet.icon) {
+    return <img className="wallet-icon" src={wallet.icon} alt="" />;
+  }
+  return (
+    <span className="wallet-icon is-letter" aria-hidden="true">
+      {wallet.name.charAt(0)}
+    </span>
   );
 }
 

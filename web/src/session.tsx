@@ -10,6 +10,7 @@ import {
 
 import { api, ApiError } from "./api/client";
 import * as wallet from "./wallet";
+import type { Wallet } from "./wallet";
 
 /**
  * Who the caller is.
@@ -68,6 +69,7 @@ export const participants: Participant[] = [
 ];
 
 const demoKey = "factorflow.demo-participant";
+const walletKey = "factorflow.wallet";
 
 interface Session {
   stage: Stage;
@@ -76,6 +78,8 @@ interface Session {
   auth: string;
   /** pendingWallet is the address that proved itself but has no organization yet. */
   pendingWallet: string;
+  /** wallets are the browser extensions that announced themselves, in announcement order. */
+  wallets: Wallet[];
   walletAvailable: boolean;
   busy: boolean;
   error: unknown;
@@ -85,7 +89,7 @@ interface Session {
   isOperator: boolean;
   nameOf: (organizationID: string) => string;
 
-  connect: () => Promise<void>;
+  connect: (walletID?: string) => Promise<void>;
   register: (type: string, name: string) => Promise<void>;
   signOut: () => Promise<void>;
   useDemo: (participantID: string) => void;
@@ -101,8 +105,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [pendingWallet, setPendingWallet] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
+  const [wallets, setWallets] = useState<Wallet[]>([]);
+  const [chosen, setChosen] = useState<Wallet | null>(null);
 
-  const available = wallet.walletAvailable();
+  // Wallets announce themselves rather than fighting over one global, so the list is a
+  // subscription: an extension that loads late appears without the page being reloaded.
+  useEffect(() => wallet.discover(setWallets), []);
 
   /**
    * load asks the server who the caller is.
@@ -148,7 +156,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         return;
       }
       const saved = localStorage.getItem(demoKey);
-      if (saved && !available && participants.some((p) => p.id === saved)) {
+      if (saved && participants.some((p) => p.id === saved)) {
         await load(saved);
       }
     })();
@@ -156,12 +164,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     return () => {
       live = false;
     };
-  }, [load, available]);
+  }, [load]);
 
   /** The wallet switching accounts means a different person is at the keyboard. */
   useEffect(
     () =>
-      wallet.onAccountChange((account) => {
+      wallet.onAccountChange(chosen, (account) => {
         if (actor.wallet && account !== actor.wallet) {
           void api.logout().catch(() => {});
           setActor(anonymous);
@@ -170,37 +178,66 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           setStage("anonymous");
         }
       }),
-    [actor.wallet],
+    [actor.wallet, chosen],
   );
 
-  const connect = useCallback(async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      const account = await wallet.connect();
-      const challenge = await api.challenge(account);
-      const signature = await wallet.sign(challenge.message, account);
+  /** pick resolves which wallet a request is for: the named one, or the only one there is. */
+  const pick = useCallback(
+    (walletID?: string): Wallet => {
+      const remembered = walletID ?? localStorage.getItem(walletKey) ?? "";
+      const found =
+        wallets.find((candidate) => candidate.id === remembered) ??
+        (wallets.length === 1 ? wallets[0] : undefined);
 
-      try {
-        await api.verify(challenge.nonce, signature);
-      } catch (cause) {
-        // A well-formed address that no organization claims is not a failure: it is someone
-        // who has not registered yet, and the next screen is the form rather than an error.
-        if (cause instanceof ApiError && cause.status === 403) {
-          setPendingWallet(account);
-          setStage("unregistered");
-          return;
-        }
-        throw cause;
+      if (!found) {
+        throw new wallet.WalletError(
+          "absent",
+          wallets.length === 0
+            ? "No wallet was found in this browser."
+            : "Choose which wallet to sign with.",
+        );
       }
+      return found;
+    },
+    [wallets],
+  );
 
-      await load("");
-    } catch (cause) {
-      setError(cause);
-    } finally {
-      setBusy(false);
-    }
-  }, [load]);
+  const connect = useCallback(
+    async (walletID?: string) => {
+      setBusy(true);
+      setError(null);
+      try {
+        const using = pick(walletID);
+        setChosen(using);
+        localStorage.setItem(walletKey, using.id);
+
+        const account = await wallet.connect(using);
+        const challenge = await api.challenge(account);
+        const signature = await wallet.sign(using, challenge.message, account);
+
+        try {
+          await api.verify(challenge.nonce, signature);
+        } catch (cause) {
+          // A well-formed address that no organization claims is not a failure: it is
+          // someone who has not registered yet, and the next screen is the form rather
+          // than an error.
+          if (cause instanceof ApiError && cause.status === 403) {
+            setPendingWallet(account);
+            setStage("unregistered");
+            return;
+          }
+          throw cause;
+        }
+
+        await load("");
+      } catch (cause) {
+        setError(cause);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [load, pick],
+  );
 
   /**
    * register creates the organization behind a proven wallet.
@@ -214,14 +251,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       setBusy(true);
       setError(null);
       try {
-        const account = pendingWallet || (await wallet.connect());
+        const using = chosen ?? pick();
+        const account = pendingWallet || (await wallet.connect(using));
         const challenge = await api.challenge(account);
-        const signature = await wallet.sign(challenge.message, account);
+        const signature = await wallet.sign(using, challenge.message, account);
 
         await api.register(challenge.nonce, signature, type, name);
 
         const next = await api.challenge(account);
-        await api.verify(next.nonce, await wallet.sign(next.message, account));
+        await api.verify(next.nonce, await wallet.sign(using, next.message, account));
         await load("");
         setPendingWallet("");
       } catch (cause) {
@@ -230,7 +268,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         setBusy(false);
       }
     },
-    [load, pendingWallet],
+    [load, pendingWallet, chosen, pick],
   );
 
   const signOut = useCallback(async () => {
@@ -238,6 +276,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     try {
       await api.logout().catch(() => {});
       localStorage.removeItem(demoKey);
+      localStorage.removeItem(walletKey);
+      setChosen(null);
       setActor(anonymous);
       setAuth("");
       setPendingWallet("");
@@ -268,7 +308,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       actor,
       auth,
       pendingWallet,
-      walletAvailable: available,
+      wallets,
+      walletAvailable: wallets.length > 0,
       busy,
       error,
       isIssuer: actor.type === "ISSUER",
@@ -286,7 +327,19 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       useDemo,
       dismissError: () => setError(null),
     }),
-    [stage, actor, auth, pendingWallet, available, busy, error, connect, register, signOut, useDemo],
+    [
+      stage,
+      actor,
+      auth,
+      pendingWallet,
+      wallets,
+      busy,
+      error,
+      connect,
+      register,
+      signOut,
+      useDemo,
+    ],
   );
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
