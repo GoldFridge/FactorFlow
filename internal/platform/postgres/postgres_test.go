@@ -51,13 +51,26 @@ func TestMigrationsAreReversible(t *testing.T) {
 	db := pgtest.New(t)
 	ctx := context.Background()
 
+	// One step back reverts one migration, which is what MigrateDown promises and all a
+	// developer undoing a mistake wants.
+	before, err := postgres.MigrationVersion(ctx, db)
+	require.NoError(t, err)
 	require.NoError(t, postgres.MigrateDown(ctx, db))
+	after, err := postgres.MigrationVersion(ctx, db)
+	require.NoError(t, err)
+	assert.Less(t, after, before, "a step back is a step")
 
-	var exists bool
-	require.NoError(t, db.Querier().QueryRow(ctx,
-		`SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'invoices')`).
-		Scan(&exists))
-	assert.False(t, exists, "the down migration removed the schema")
+	// Every step back leaves nothing, which is the property a rollback actually depends
+	// on: each migration's down has to work, not only the newest one.
+	require.NoError(t, postgres.MigrateReset(ctx, db))
+
+	for _, table := range []string{"invoices", "encrypted_objects"} {
+		var exists bool
+		require.NoError(t, db.Querier().QueryRow(ctx,
+			`SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = $1)`,
+			table).Scan(&exists))
+		assert.Falsef(t, exists, "the down migrations removed %s", table)
+	}
 
 	require.NoError(t, postgres.Migrate(ctx, db), "and it can be applied again")
 }

@@ -50,6 +50,26 @@ func MigrateDown(ctx context.Context, db *DB) error {
 	return nil
 }
 
+// MigrateReset rolls every migration back, newest first.
+//
+// It exists for the migration test rather than for a deploy: a down migration nobody ever
+// runs is a rollback that fails the first time it is needed, and only the oldest one is
+// exercised by rolling back a single step.
+func MigrateReset(ctx context.Context, db *DB) error {
+	goose.SetBaseFS(migrations.FS)
+	if err := goose.SetDialect(dialect); err != nil {
+		return fmt.Errorf("setting goose dialect: %w", err)
+	}
+
+	sqlDB := stdlib.OpenDBFromPool(db.Pool())
+	defer func() { _ = sqlDB.Close() }()
+
+	if err := goose.DownToContext(ctx, sqlDB, ".", 0); err != nil {
+		return fmt.Errorf("rolling back every migration: %w", err)
+	}
+	return nil
+}
+
 // MigrationVersion reports the applied schema version, which the readiness endpoint and
 // the audit trail both report.
 func MigrationVersion(ctx context.Context, db *DB) (int64, error) {
