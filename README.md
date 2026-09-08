@@ -167,6 +167,22 @@ the in-process implementation. A staging or production deployment refuses to sta
 development database default, so a shared server cannot quietly run against localhost with
 the demo header enabled.
 
+## Hedera
+
+With `FF_HEDERA_ACCOUNT_ID` and `FF_HEDERA_PRIVATE_KEY` set, an approved receivable is minted
+as a fungible token on the configured network — testnet unless something says otherwise. One
+receivable is one token, and its supply is the face value in minor units, so a holder's
+balance is the notional they own in cents with no conversion to get wrong. The token's memo
+carries the commitment to the invoice and nothing else.
+
+The treasury is the platform's own account rather than the issuer's wallet. That is a real
+limitation, not a shortcut: a treasury signs the transactions that create and move its
+tokens, and the platform does not hold an issuer's key. So the supply is minted into custody,
+and the issuer's claim until settlement is the record in this system rather than a balance on
+the network. Moving a token to an investor additionally needs that investor's account to have
+associated it, which is the investor's decision and not something this platform can perform
+for them — so settlement transfers still run through the local executor.
+
 ## Known gaps
 
 - Clearing 500 invoices against 2000 bids takes about 31 seconds against the

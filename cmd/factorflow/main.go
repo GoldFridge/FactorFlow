@@ -32,6 +32,7 @@ import (
 	"github.com/GoldFridge/factorflow/internal/platform/audit"
 	"github.com/GoldFridge/factorflow/internal/platform/clock"
 	"github.com/GoldFridge/factorflow/internal/platform/config"
+	"github.com/GoldFridge/factorflow/internal/platform/hedera"
 	"github.com/GoldFridge/factorflow/internal/platform/httpserver"
 	"github.com/GoldFridge/factorflow/internal/platform/idempotency"
 	"github.com/GoldFridge/factorflow/internal/platform/money"
@@ -189,6 +190,7 @@ type application struct {
 // offline without any module knowing which it got.
 func wire(cfg config.Config, db *postgres.DB, clk *clock.Clock, ids func() uuid.UUID) *application {
 	now := clk.Now
+	chain := hederaClient(cfg)
 
 	invoices := invoice.NewPostgresRepository()
 	assessments := risk.NewPostgresRepository()
@@ -238,7 +240,7 @@ func wire(cfg config.Config, db *postgres.DB, clk *clock.Clock, ids func() uuid.
 		Assessments: assessments,
 		Assets:      assets,
 		Wallets:     organizationWallets{repo: organizations},
-		Issuer:      assetIssuer(cfg),
+		Issuer:      assetIssuer(cfg, chain),
 		Audit:       trail,
 		Now:         now,
 		IDs:         ids,
@@ -426,12 +428,42 @@ func transferExecutor(cfg config.Config, now func() time.Time) settlement.Execut
 	return settlement.NewLocalExecutor(now)
 }
 
-// assetIssuer picks the live tokenization studio when Hedera credentials are configured.
-func assetIssuer(cfg config.Config) tokenization.Issuer {
-	if cfg.Providers.HederaIsLive() {
-		slog.Warn("hedera credentials are set but the ATS adapter is not implemented; using the local issuer")
+// assetIssuer mints on Hedera when credentials are configured, and in process otherwise.
+//
+// A broken chain client is not a reason to refuse to start: the local issuer keeps the
+// service usable, and the warning says plainly that nothing is reaching a network. What must
+// never happen is the opposite — quietly reporting a local asset as though it were on chain,
+// which is why the local issuer calls its network "local" rather than naming a real one.
+func assetIssuer(cfg config.Config, chain *hedera.Client) tokenization.Issuer {
+	if chain == nil {
+		if cfg.Providers.HederaIsLive() {
+			slog.Warn("hedera credentials are set but the client could not be built; using the local issuer")
+		}
+		return tokenization.NewLocalIssuer()
 	}
-	return tokenization.NewLocalIssuer()
+
+	slog.Info("minting receivables on hedera",
+		slog.String("network", chain.Network()), slog.String("treasury", chain.Operator()))
+	return tokenization.NewHederaIssuer(chain)
+}
+
+// hederaClient connects when credentials are present, and reports why it could not rather
+// than failing the process: every path it serves has an in-process alternative.
+func hederaClient(cfg config.Config) *hedera.Client {
+	if !cfg.Providers.HederaIsLive() {
+		return nil
+	}
+
+	client, err := hedera.Connect(hedera.Config{
+		Network:    cfg.Providers.HederaNetwork,
+		AccountID:  cfg.Providers.HederaAccountID,
+		PrivateKey: cfg.Providers.HederaPrivateKey,
+	})
+	if err != nil {
+		slog.Error("hedera credentials were rejected", slog.String("error", err.Error()))
+		return nil
+	}
+	return client
 }
 
 // marketProvider picks the live gateway when one is configured, and the deterministic demo

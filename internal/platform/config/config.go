@@ -80,10 +80,13 @@ func (p PaidAPI) IsLive() bool { return p.FacilitatorURL != "" }
 type Providers struct {
 	HederaAccountID  string
 	HederaPrivateKey string
-	GraphAPIKey      string
-	GraphGatewayURL  string
-	CREEndpoint      string
-	LLMAPIKey        string
+	// HederaNetwork is testnet unless something says otherwise: a demo that mints on
+	// mainnet by forgetting a variable is not a mistake worth leaving available.
+	HederaNetwork   string
+	GraphAPIKey     string
+	GraphGatewayURL string
+	CREEndpoint     string
+	LLMAPIKey       string
 }
 
 // GraphIsLive reports whether a live Graph gateway is configured.
@@ -106,6 +109,9 @@ const developmentDatabaseURL = "postgres://factorflow:factorflow@localhost:5432/
 
 // Load reads the configuration from the environment.
 func Load() (Config, error) {
+	// A local .env fills in what the environment has not set, never the other way round.
+	loadDotEnv(DotEnvFile)
+
 	cfg := Config{
 		Env:            Environment(strings.ToLower(envOr("FF_ENV", string(Development)))),
 		HTTPAddr:       envOr("FF_HTTP_ADDR", ":8080"),
@@ -114,6 +120,7 @@ func Load() (Config, error) {
 		Providers: Providers{
 			HederaAccountID:  os.Getenv("FF_HEDERA_ACCOUNT_ID"),
 			HederaPrivateKey: os.Getenv("FF_HEDERA_PRIVATE_KEY"),
+			HederaNetwork:    envOr("FF_HEDERA_NETWORK", "testnet"),
 			GraphAPIKey:      os.Getenv("FF_GRAPH_API_KEY"),
 			GraphGatewayURL:  os.Getenv("FF_GRAPH_GATEWAY_URL"),
 			CREEndpoint:      os.Getenv("FF_CRE_ENDPOINT"),
