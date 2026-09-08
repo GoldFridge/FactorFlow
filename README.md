@@ -183,6 +183,25 @@ the network. Moving a token to an investor additionally needs that investor's ac
 associated it, which is the investor's decision and not something this platform can perform
 for them — so settlement transfers still run through the local executor.
 
+## Market data
+
+With `FF_GRAPH_API_KEY` set, the benchmark is read from lending markets on The Graph's
+decentralized network — Aave V3 and Compound V3 on Ethereum by default, both publishing the
+same standardized schema, so one query text serves both. The snapshot records which subgraphs
+answered and at which block, which is what lets a published price be traced back to the rows
+behind it rather than taken on trust.
+
+Two protocols rather than one: a median over a single venue is that venue's rate with extra
+steps. A subgraph that fails takes the whole fetch with it, because dropping the venue that
+did not answer would move the benchmark with nothing on the snapshot to say why — so pricing
+fails closed and the invoice is assessed once the gateway is answering again.
+
+## Reseeding
+
+Stop the server before seeding. Both processes run the same outbox dispatcher, and a running
+server will happily claim the seed's work — which is correct behaviour for competing
+consumers, and confusing when the two were started with different configuration.
+
 ## Known gaps
 
 - Clearing 500 invoices against 2000 bids takes about 31 seconds against the

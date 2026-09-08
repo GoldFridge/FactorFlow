@@ -469,20 +469,35 @@ func hederaClient(cfg config.Config) *hedera.Client {
 // marketProvider picks the live gateway when one is configured, and the deterministic demo
 // market set otherwise.
 func marketProvider(cfg config.Config) marketdata.Provider {
-	if cfg.Providers.GraphIsLive() {
-		// The live Graph gateway adapter is not implemented yet; falling back keeps the
-		// process honest about what it is running rather than failing at the first price.
-		slog.Warn("graph credentials are set but the live adapter is not implemented; using the demo market set")
+	if !cfg.Providers.GraphIsLive() {
+		return marketdata.NewStaticProvider(marketdata.DemoMarkets()...)
 	}
-	return marketdata.NewStaticProvider(marketdata.DemoMarkets()...)
+
+	provider, err := marketdata.NewGraphProvider(marketdata.GraphConfig{
+		APIKey:     cfg.Providers.GraphAPIKey,
+		GatewayURL: cfg.Providers.GraphGatewayURL,
+	})
+	if err != nil {
+		// A rejected key is a configuration mistake, not a reason to stop serving. What it
+		// must not do is go unsaid: every price computed after this line comes from the
+		// demo market set, and the snapshot behind it says so in its provider field.
+		slog.Error("graph credentials were rejected; using the demo market set",
+			slog.String("error", err.Error()))
+		return marketdata.NewStaticProvider(marketdata.DemoMarkets()...)
+	}
+
+	slog.Info("pricing against live lending markets",
+		slog.String("network", cfg.Providers.GraphNetwork),
+		slog.String("asset", cfg.Providers.GraphAsset),
+		slog.Any("subgraphs", provider.Subgraphs()))
+	return provider
 }
 
 func marketQuery(cfg config.Config) marketdata.Query {
-	query := marketdata.DemoQuery()
-	if cfg.Providers.GraphIsLive() {
-		query.Provider = "thegraph-gateway"
+	if !cfg.Providers.GraphIsLive() {
+		return marketdata.DemoQuery()
 	}
-	return query
+	return marketdata.GraphQuery(cfg.Providers.GraphNetwork, cfg.Providers.GraphAsset)
 }
 
 // confidentialWorkflow picks the live CRE workflow when one is configured.

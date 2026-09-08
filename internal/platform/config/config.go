@@ -87,6 +87,10 @@ type Providers struct {
 	GraphGatewayURL string
 	CREEndpoint     string
 	LLMAPIKey       string
+	// GraphNetwork and GraphAsset name the question the benchmark answers: which chain's
+	// lending markets, denominated in what.
+	GraphNetwork string
+	GraphAsset   string
 }
 
 // GraphIsLive reports whether a live Graph gateway is configured.
@@ -123,6 +127,8 @@ func Load() (Config, error) {
 			HederaNetwork:    envOr("FF_HEDERA_NETWORK", "testnet"),
 			GraphAPIKey:      os.Getenv("FF_GRAPH_API_KEY"),
 			GraphGatewayURL:  os.Getenv("FF_GRAPH_GATEWAY_URL"),
+			GraphNetwork:     envOr("FF_GRAPH_NETWORK", "ethereum"),
+			GraphAsset:       envOr("FF_GRAPH_ASSET", "USDC"),
 			CREEndpoint:      os.Getenv("FF_CRE_ENDPOINT"),
 			LLMAPIKey:        os.Getenv("FF_LLM_API_KEY"),
 		},
