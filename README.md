@@ -128,6 +128,33 @@ within a second. Then `approve`, `tokenize`, and `POST /auctions` with the invoi
 the batch. Investors bid at `POST /auctions/{id}/bids`, and `POST /auctions/{id}/clear`
 after the closing time returns the allocation and its certificate.
 
+## Running the demo
+
+Three commands, from the repository root:
+
+```
+docker compose -f deploy/docker-compose.yml up -d   # PostgreSQL on :5432
+go run ./cmd/factorflow seed                        # the demo dataset
+go run ./cmd/factorflow                             # the API on :8080
+```
+
+The seed builds its dataset by driving the real services, with a clock it moves rather than
+rules it relaxes: the finished batch was uploaded, priced, minted, cleared after its window
+closed, and paid, a week of history ago. Seeding an already-seeded database does nothing, so
+restarting a demo server is safe. Every identifier it writes is derived from a fixed
+namespace, so the dataset — grades and prices included — is the same one every time.
+
+The web app is a separate process in development:
+
+```
+cd web && npm install && npm run dev                # the app on :5173
+```
+
+It proxies `/api` to the server, and the participant switcher in the masthead chooses which
+seeded organization you are acting as. That switcher is a development affordance: the server
+reads what an organization may actually do from its own record, so choosing a name can only
+narrow what the API allows.
+
 ## Configuration
 
 Copy `.env.example` to `.env`. Every provider variable is optional: an empty value selects

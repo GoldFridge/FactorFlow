@@ -39,6 +39,18 @@ fmt: ## Format sources
 tidy: ## Tidy module dependencies
 	$(GO) mod tidy
 
+web: ## Run the web app against a local server
+	cd web && npm run dev
+
+web-install: ## Install the web app's dependencies
+	cd web && npm install
+
+web-test: ## Web app tests and type check
+	cd web && npm run typecheck && npm test
+
+seed: ## Fill the database with the demo dataset
+	go run ./cmd/factorflow seed
+
 up: ## Start local dependencies
 	docker compose -f deploy/docker-compose.yml up -d
 
