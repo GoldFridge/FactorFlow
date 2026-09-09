@@ -31,6 +31,7 @@ import (
 	"github.com/GoldFridge/factorflow/internal/platform/apperr"
 	"github.com/GoldFridge/factorflow/internal/platform/audit"
 	"github.com/GoldFridge/factorflow/internal/platform/postgres"
+	"github.com/GoldFridge/factorflow/internal/redemption"
 	"github.com/GoldFridge/factorflow/internal/risk"
 	"github.com/GoldFridge/factorflow/internal/settlement"
 	"github.com/GoldFridge/factorflow/internal/tokenization"
@@ -92,6 +93,7 @@ type Store struct {
 	bids          map[uuid.UUID]auction.Bid
 	solutions     map[uuid.UUID]auction.Solution
 	settlements   map[uuid.UUID]settlement.Settlement
+	repayments    map[uuid.UUID]redemption.Repayment
 	events        []audit.Event
 
 	snapshot *state
@@ -116,6 +118,7 @@ type state struct {
 	bids        map[uuid.UUID]auction.Bid
 	solutions   map[uuid.UUID]auction.Solution
 	settlements map[uuid.UUID]settlement.Settlement
+	repayments  map[uuid.UUID]redemption.Repayment
 	events      []audit.Event
 }
 
@@ -135,6 +138,7 @@ func New() *Store {
 		bids:        map[uuid.UUID]auction.Bid{},
 		solutions:   map[uuid.UUID]auction.Solution{},
 		settlements: map[uuid.UUID]settlement.Settlement{},
+		repayments:  map[uuid.UUID]redemption.Repayment{},
 		querier:     &Querier{},
 	}
 }
@@ -179,6 +183,7 @@ func (s *Store) begin() {
 		bids:        copyMap(s.bids),
 		solutions:   copyMap(s.solutions),
 		settlements: copyMap(s.settlements),
+		repayments:  copyMap(s.repayments),
 		events:      append([]audit.Event(nil), s.events...),
 	}
 }
@@ -202,6 +207,7 @@ func (s *Store) rollback() {
 	s.bids = s.snapshot.bids
 	s.solutions = s.snapshot.solutions
 	s.settlements = s.snapshot.settlements
+	s.repayments = s.snapshot.repayments
 	s.events = s.snapshot.events
 	s.snapshot = nil
 }

@@ -107,6 +107,10 @@ func (r *settlementRepo) ListByAuction(_ context.Context, _ postgres.Querier, au
 	return r.list(func(s settlement.Settlement) bool { return s.AuctionID == auctionID }, 0)
 }
 
+func (r *settlementRepo) ListByInvoice(_ context.Context, _ postgres.Querier, invoiceID uuid.UUID) ([]*settlement.Settlement, error) {
+	return r.list(func(s settlement.Settlement) bool { return s.InvoiceID == invoiceID }, 0)
+}
+
 func (r *settlementRepo) ListUnfinished(_ context.Context, _ postgres.Querier, limit int) ([]*settlement.Settlement, error) {
 	return r.list(func(s settlement.Settlement) bool { return !s.IsFinished() }, limit)
 }

@@ -44,6 +44,7 @@ var domainModules = map[string]struct{}{
 	"auction":      {},
 	"settlement":   {},
 	"payments":     {},
+	"redemption":   {},
 }
 
 // allowedDomainEdges are the dependencies between domain modules that are deliberate.

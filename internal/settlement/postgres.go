@@ -20,6 +20,7 @@ type Repository interface {
 	GetByOperation(ctx context.Context, q postgres.Querier, operationID string) (*Settlement, error)
 	Update(ctx context.Context, q postgres.Querier, s *Settlement, expectedVersion int64) error
 	ListByAuction(ctx context.Context, q postgres.Querier, auctionID uuid.UUID) ([]*Settlement, error)
+	ListByInvoice(ctx context.Context, q postgres.Querier, invoiceID uuid.UUID) ([]*Settlement, error)
 	ListUnfinished(ctx context.Context, q postgres.Querier, limit int) ([]*Settlement, error)
 }
 
@@ -109,6 +110,21 @@ func (r *PostgresRepository) ListByAuction(ctx context.Context, q postgres.Queri
 		 ORDER BY created_at, id`
 
 	return querySettlements(ctx, q, query, auctionID)
+}
+
+// ListByInvoice returns the transfers that carried one receivable to its buyers.
+//
+// It answers the question maturity asks: who ended up holding this, and for how much. A
+// caller deciding who is owed money must still look at each settlement's state, because a
+// transfer that never completed did not make anybody a holder.
+func (r *PostgresRepository) ListByInvoice(ctx context.Context, q postgres.Querier, invoiceID uuid.UUID) ([]*Settlement, error) {
+	const query = `
+		SELECT ` + settlementColumns + `
+		  FROM settlements
+		 WHERE invoice_id = $1
+		 ORDER BY created_at, id`
+
+	return querySettlements(ctx, q, query, invoiceID)
 }
 
 // ListUnfinished returns settlements that still need work, oldest first.

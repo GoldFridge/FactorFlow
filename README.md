@@ -230,6 +230,26 @@ only once the batch has left DRAFT, because a draft can still be abandoned witho
 ever having been asked to price it. In the interface this is the "why this price" link on the
 board, and a stranger who lands on `/invoices/{id}` is handed over to it.
 
+## When the receivable comes due
+
+Everything before maturity is a promise. `POST /invoices/{id}/repayment` records what the
+debtor actually paid and divides it among the parties that hold the receivable: each
+investor whose transfer completed, and the issuer for whatever it never sold. The division
+is exact in minor units — every unit paid is handed to somebody, none is invented — and the
+remainder goes to the largest fractional parts with ties broken by party id, so the same
+payment splits the same way on every machine that computes it.
+
+Only an operator records it, because in factoring the debtor pays the platform: letting the
+seller declare that the money arrived would let it decide when its own obligation ended. A
+payment short of the face is still divided and still closes the receivable as DEFAULTED,
+because an investor reading its position has to be able to tell a receivable that came good
+from one that did not. `POST /invoices/{id}/default` closes one the debtor never paid, and
+refuses before the due date.
+
+A receivable is repaid once: the unique constraint on the repayment says so, and a retried
+request returns the payment already recorded rather than crediting every holder twice.
+`GET /repayments` is a party's own record of what came back.
+
 ## Reseeding
 
 Stop the server before seeding. Both processes run the same outbox dispatcher, and a running

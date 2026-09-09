@@ -117,6 +117,8 @@ func start() (*postgres.DB, func(), error) {
 const truncateStatement = `
 TRUNCATE TABLE
     encrypted_objects,
+    repayment_shares,
+    repayments,
     idempotency_keys,
     outbox_events,
     audit_events,

@@ -18,6 +18,7 @@ import (
 
 	"github.com/GoldFridge/factorflow/internal/app/agents"
 	"github.com/GoldFridge/factorflow/internal/app/assessment"
+	"github.com/GoldFridge/factorflow/internal/app/collections"
 	"github.com/GoldFridge/factorflow/internal/app/demo"
 	"github.com/GoldFridge/factorflow/internal/app/documents"
 	"github.com/GoldFridge/factorflow/internal/app/issuance"
@@ -40,6 +41,7 @@ import (
 	"github.com/GoldFridge/factorflow/internal/platform/objects"
 	"github.com/GoldFridge/factorflow/internal/platform/outbox"
 	"github.com/GoldFridge/factorflow/internal/platform/postgres"
+	"github.com/GoldFridge/factorflow/internal/redemption"
 	"github.com/GoldFridge/factorflow/internal/risk"
 	"github.com/GoldFridge/factorflow/internal/settlement"
 	"github.com/GoldFridge/factorflow/internal/tokenization"
@@ -301,6 +303,15 @@ func wire(cfg config.Config, db *postgres.DB, clk *clock.Clock, ids func() uuid.
 		Audit:    trail,
 		Now:      now,
 	})
+	collectionService := collections.NewService(collections.Config{
+		DB:          db,
+		Invoices:    invoices,
+		Settlements: settlements,
+		Repayments:  redemption.NewPostgresRepository(),
+		Audit:       trail,
+		IDs:         ids,
+		Now:         now,
+	})
 	reportingService := reporting.NewService(reporting.Config{
 		DB:          db,
 		Invoices:    invoices,
@@ -318,6 +329,7 @@ func wire(cfg config.Config, db *postgres.DB, clk *clock.Clock, ids func() uuid.
 	onboardingHandler := onboarding.NewHandler(onboardingService)
 	reportingHandler := reporting.NewHandler(reportingService, now)
 	documentHandler := documents.NewHandler(documentService)
+	collectionHandler := collections.NewHandler(collectionService)
 	paidHandler := payments.NewHandler(paidService)
 	paidPrice := paidPrice(cfg)
 
@@ -350,6 +362,7 @@ func wire(cfg config.Config, db *postgres.DB, clk *clock.Clock, ids func() uuid.
 				onboardingHandler.Routes(protected)
 				reportingHandler.Routes(protected)
 				documentHandler.Routes(protected)
+				collectionHandler.Routes(protected)
 			})
 		},
 	})
