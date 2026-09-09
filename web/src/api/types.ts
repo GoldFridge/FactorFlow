@@ -53,6 +53,34 @@ export interface Listing {
   assessment?: Assessment;
 }
 
+/** RepaymentShare is one holder's part of what the debtor paid. */
+export interface RepaymentShare {
+  party_id: string;
+  notional: string;
+  amount: string;
+}
+
+/**
+ * Repayment is the end of a receivable: what the debtor paid, and how it was divided.
+ *
+ * Face and amount are both here because the difference is the whole question at maturity —
+ * a payment short of the face is a credit event, not a rounding note.
+ */
+export interface Repayment {
+  id: string;
+  invoice_id: string;
+  face: string;
+  amount: string;
+  shortfall: string;
+  currency: string;
+  is_shortfall: boolean;
+  reference: string;
+  received_at: string;
+  recorded_by: string;
+  shares: RepaymentShare[];
+  created_at: string;
+}
+
 export interface Lot {
   id: string;
   invoice_id: string;

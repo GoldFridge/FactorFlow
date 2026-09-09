@@ -5,6 +5,7 @@ import type { AuditEvent } from "../api/types";
 import { Fact, Headline, Loader, Panel, Status, useAsync } from "../components";
 import { date, dateTime, money, shortHash, words } from "../format";
 import { useSession } from "../session";
+import { Maturity } from "./Maturity";
 import { Price } from "./Price";
 
 /**
@@ -57,6 +58,10 @@ export function InvoiceDetail() {
           </Panel>
 
           {assessment.data ? <Price assessment={assessment.data} /> : null}
+
+          {inv.status === "SETTLED" || inv.status === "MATURED" || inv.status === "DEFAULTED" ? (
+            <Maturity invoice={inv} />
+          ) : null}
 
           <Panel title="Provenance" padded={false}>
             <Loader state={timeline} empty="Nothing recorded yet.">

@@ -10,6 +10,7 @@ import type {
   Listing,
   MarketSnapshot,
   Organization,
+  Repayment,
   Session,
   Settlement,
   Solution,
@@ -167,6 +168,34 @@ export const api = {
 
   tokenizeInvoice: (auth: string, id: string) =>
     request<Invoice>(`${base}/invoices/${id}/tokenize`, auth, { method: "POST", body: "{}" }),
+
+  /**
+   * Maturity. The repayment is what the debtor actually paid and how it was divided; only
+   * an operator records one, because the debtor pays the platform rather than the seller.
+   */
+  repayment: (auth: string, invoiceID: string) =>
+    request<Repayment>(`${base}/invoices/${invoiceID}/repayment`, auth),
+
+  recordRepayment: (
+    auth: string,
+    invoiceID: string,
+    payment: { amount: string; currency: string; reference: string; received_at?: string },
+  ) =>
+    request<Repayment>(`${base}/invoices/${invoiceID}/repayment`, auth, {
+      method: "POST",
+      body: JSON.stringify(payment),
+    }),
+
+  declareDefault: (auth: string, invoiceID: string, reason: string) =>
+    request<{ invoice_id: string; status: string; reason: string }>(
+      `${base}/invoices/${invoiceID}/default`,
+      auth,
+      { method: "POST", body: JSON.stringify({ reason }) },
+    ),
+
+  /** What came back to this organization, newest first. */
+  repayments: (auth: string) =>
+    request<Items<Repayment>>(`${base}/repayments`, auth).then((r) => r.items),
 
   auctions: (auth: string, status?: string) =>
     request<Items<Auction>>(
