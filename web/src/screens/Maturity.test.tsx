@@ -7,7 +7,6 @@ import { api, ApiError } from "../api/client";
 import type { Invoice, Repayment } from "../api/types";
 import { SessionProvider, participants } from "../session";
 import { Maturity } from "./Maturity";
-import { Returns } from "./Returns";
 
 vi.mock("../api/client", async () => {
   const actual = await vi.importActual<typeof import("../api/client")>("../api/client");
@@ -19,7 +18,6 @@ vi.mock("../api/client", async () => {
       repayment: vi.fn(),
       recordRepayment: vi.fn(),
       declareDefault: vi.fn(),
-      repayments: vi.fn(),
     },
   };
 });
@@ -101,7 +99,6 @@ describe("maturity", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
-    vi.mocked(api.repayments).mockResolvedValue([]);
   });
 
   /*
@@ -233,46 +230,3 @@ describe("maturity", () => {
   });
 });
 
-describe("returns", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    localStorage.clear();
-  });
-
-  /*
-   * The totals are the reader's own, not the payment's: an investor who held part of a
-   * receivable is owed part of what arrived, and a screen that added up the whole payment
-   * would flatter every position on it.
-   */
-  it("totals the reader's own share, not the whole payment", async () => {
-    vi.mocked(api.repayments).mockResolvedValue([
-      repayment(),
-      repayment({
-        id: "r2",
-        invoice_id: "i2",
-        reference: "SWIFT-2026-11-08-0043",
-        amount: "7500.00",
-        shortfall: "2500.00",
-        is_shortfall: true,
-        shares: [{ party_id: investor.id, notional: "4000.00", amount: "3000.00" }],
-      }),
-    ]);
-
-    show(<Returns />);
-
-    expect(await screen.findByText("SWIFT-2026-11-07-0042")).toBeInTheDocument();
-
-    // 6000.00 + 3000.00 of receipts against 6000.00 + 4000.00 of face held.
-    expect(screen.getByText("$9.00K")).toBeInTheDocument();
-    expect(screen.getByText("$10.00K")).toBeInTheDocument();
-    expect(screen.getByText("Paid short")).toBeInTheDocument();
-  });
-
-  it("says nothing has matured rather than showing an empty table", async () => {
-    vi.mocked(api.repayments).mockResolvedValue([]);
-
-    show(<Returns />);
-
-    expect(await screen.findByText(/Nothing has matured yet/)).toBeInTheDocument();
-  });
-});

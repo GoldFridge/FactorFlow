@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -31,6 +32,7 @@ import (
 	"github.com/GoldFridge/factorflow/internal/marketdata"
 	"github.com/GoldFridge/factorflow/internal/organization"
 	"github.com/GoldFridge/factorflow/internal/payments"
+	"github.com/GoldFridge/factorflow/internal/platform/apperr"
 	"github.com/GoldFridge/factorflow/internal/platform/audit"
 	"github.com/GoldFridge/factorflow/internal/platform/clock"
 	"github.com/GoldFridge/factorflow/internal/platform/config"
@@ -62,10 +64,109 @@ func main() {
 // dispatch picks what this invocation does. The seed shares the server's object graph
 // rather than reimplementing it, so seeded data is produced by the code being demonstrated.
 func dispatch(args []string) error {
-	if len(args) > 0 && args[0] == "seed" {
-		return seed()
+	if len(args) > 0 {
+		switch args[0] {
+		case "seed":
+			return seed()
+		case "operator":
+			return makeOperator(args[1:])
+		}
 	}
 	return run()
+}
+
+/*
+makeOperator admits a wallet as the platform's operator.
+
+A deployment needs this to exist outside the API, because the API cannot provide it: an
+operator is the party that admits everyone else, so the first one cannot be admitted by
+anybody, and registration deliberately refuses to mint one. On a fresh server the only
+operator is the seed's, whose address is a placeholder nobody holds — which would leave a
+demo where nobody can approve the first participant.
+
+	factorflow operator 0xYourWalletAddress "FactorFlow Operations"
+*/
+func makeOperator(args []string) error {
+	if len(args) == 0 {
+		return errors.New("usage: factorflow operator <wallet-address> [name]")
+	}
+	name := "FactorFlow Operations"
+	if len(args) > 1 && strings.TrimSpace(args[1]) != "" {
+		name = args[1]
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.LogLevel})))
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	db, err := postgres.Connect(ctx, postgres.DefaultConfig(cfg.DatabaseURL))
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	if err := postgres.Migrate(ctx, db); err != nil {
+		return err
+	}
+
+	repo := organization.NewPostgresRepository()
+	trail := audit.NewPostgresRecorder()
+	now := time.Now().UTC()
+
+	return db.InTx(ctx, func(q postgres.Querier) error {
+		// A wallet that already acts for somebody is not quietly promoted: an address is
+		// one participant, and turning an issuer into an operator behind its own back is
+		// not something a command-line argument should be able to do.
+		existing, err := repo.GetByWallet(ctx, q, args[0])
+		if err == nil {
+			if existing.Type != organization.TypeOperator {
+				return fmt.Errorf("wallet %s already acts for %s (%s)",
+					existing.Wallet, existing.Name, existing.Type)
+			}
+			slog.Info("this wallet is already an operator",
+				slog.String("organization", existing.ID.String()),
+				slog.String("wallet", existing.Wallet))
+			return nil
+		}
+		if !apperr.IsNotFound(err) {
+			return err
+		}
+
+		org, err := organization.New(organization.NewParams{
+			ID:     uuid.New(),
+			Type:   organization.TypeOperator,
+			Name:   name,
+			Wallet: args[0],
+		}, now)
+		if err != nil {
+			return err
+		}
+		if err := org.Approve(now); err != nil {
+			return err
+		}
+		if err := repo.Create(ctx, q, org); err != nil {
+			return err
+		}
+		if err := trail.Record(ctx, q,
+			audit.Of(ctx, "console", onboarding.ActionApproved,
+				onboarding.EntityType, org.ID.String(), now).
+				With("type", org.Type.String()).
+				With("wallet", org.Wallet).
+				With("by", "the operator console command")); err != nil {
+			return err
+		}
+
+		slog.Info("operator admitted",
+			slog.String("organization", org.ID.String()),
+			slog.String("wallet", org.Wallet),
+			slog.String("name", org.Name))
+		return nil
+	})
 }
 
 // seed builds the demo dataset and exits.
@@ -272,7 +373,7 @@ func wire(cfg config.Config, db *postgres.DB, clk *clock.Clock, ids func() uuid.
 		Audit:         trail,
 		// A demo has nobody to approve the first participant, so development grants
 		// eligibility on registration. Anywhere else it is an operator's decision.
-		AutoApprove: cfg.DemoAuthEnabled(),
+		AutoApprove: cfg.AutoApprove,
 		Now:         now,
 		IDs:         ids,
 	})
@@ -336,6 +437,7 @@ func wire(cfg config.Config, db *postgres.DB, clk *clock.Clock, ids func() uuid.
 
 	router := httpserver.NewRouter(httpserver.Dependencies{
 		Version: version,
+		Web:     webApp(cfg),
 		Ready:   db.Ping,
 		// The paid endpoints sit at the root because their path is part of the x402
 		// contract an agent was given, not part of this platform's own versioning.
@@ -472,6 +574,25 @@ func assetIssuer(cfg config.Config, chain *hedera.Client) tokenization.Issuer {
 	slog.Info("minting receivables on hedera",
 		slog.String("network", chain.Network()), slog.String("treasury", chain.Operator()))
 	return tokenization.NewHederaIssuer(chain)
+}
+
+// webApp serves the built interface when this process is configured to.
+//
+// A directory that was named and cannot be served stops the process: a deployment that
+// meant to serve the interface and quietly served nothing is worse than one that refuses
+// to start, because the first person to notice is a visitor.
+func webApp(cfg config.Config) http.Handler {
+	if cfg.WebDir == "" {
+		return nil
+	}
+
+	web, err := httpserver.Static(cfg.WebDir)
+	if err != nil {
+		slog.Error("the web application could not be served", slog.String("error", err.Error()))
+		os.Exit(1)
+	}
+	slog.Info("serving the interface", slog.String("dir", cfg.WebDir))
+	return web
 }
 
 // hederaClient connects when credentials are present, and reports why it could not rather

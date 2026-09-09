@@ -21,6 +21,7 @@ type Repository interface {
 	Update(ctx context.Context, q postgres.Querier, s *Settlement, expectedVersion int64) error
 	ListByAuction(ctx context.Context, q postgres.Querier, auctionID uuid.UUID) ([]*Settlement, error)
 	ListByInvoice(ctx context.Context, q postgres.Querier, invoiceID uuid.UUID) ([]*Settlement, error)
+	ListByInvestor(ctx context.Context, q postgres.Querier, investorID uuid.UUID, limit int) ([]*Settlement, error)
 	ListUnfinished(ctx context.Context, q postgres.Querier, limit int) ([]*Settlement, error)
 }
 
@@ -125,6 +126,26 @@ func (r *PostgresRepository) ListByInvoice(ctx context.Context, q postgres.Queri
 		 ORDER BY created_at, id`
 
 	return querySettlements(ctx, q, query, invoiceID)
+}
+
+// ListByInvestor returns what one investor was transferred, newest first.
+//
+// It is the question an investor asks about itself: what do I hold. Unfinished transfers
+// are included, because a position still in flight is something its buyer is entitled to
+// see — it is the caller that decides how to say so.
+func (r *PostgresRepository) ListByInvestor(ctx context.Context, q postgres.Querier, investorID uuid.UUID, limit int) ([]*Settlement, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+
+	const query = `
+		SELECT ` + settlementColumns + `
+		  FROM settlements
+		 WHERE investor_id = $1
+		 ORDER BY created_at DESC, id
+		 LIMIT $2`
+
+	return querySettlements(ctx, q, query, investorID, limit)
 }
 
 // ListUnfinished returns settlements that still need work, oldest first.

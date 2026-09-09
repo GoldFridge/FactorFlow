@@ -1,0 +1,24 @@
+# The build context is copied into the daemon before anything runs, so what is not needed
+# to build is not sent.
+.git
+.github
+.idea
+.vscode
+
+# Secrets never enter an image. The server reads them from its own env file at run time.
+.env
+.env.*
+!.env.example
+
+# Build outputs: the image builds its own.
+web/node_modules
+web/dist
+factorflow.exe
+*.exe
+/bin
+/dist
+coverage.txt
+
+docs
+README.md
+LICENSE

@@ -9,6 +9,7 @@ import type {
   Items,
   Listing,
   MarketSnapshot,
+  Holding,
   Organization,
   Repayment,
   Session,
@@ -222,6 +223,10 @@ export const api = {
       auth,
       { method: "POST", body: JSON.stringify({ reason }) },
     ),
+
+  /** What this organization bought and what became of it, newest first. */
+  holdings: (auth: string) =>
+    request<Items<Holding>>(`${base}/holdings`, auth).then((r) => r.items),
 
   /** What came back to this organization, newest first. */
   repayments: (auth: string) =>

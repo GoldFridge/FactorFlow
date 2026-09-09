@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -45,6 +46,9 @@ type Dependencies struct {
 	// agent is told to POST to /paid/v1/..., and burying that under another version prefix
 	// would make the platform's own layout part of a contract with other people's clients.
 	RootRoutes func(r chi.Router)
+	// Web serves the single-page application. It is optional: without it this process is
+	// an API and nothing else, which is what the tests and a split deployment want.
+	Web http.Handler
 }
 
 // NewRouter builds the HTTP router with the middleware every request passes through.
@@ -71,6 +75,13 @@ func NewRouter(deps Dependencies) http.Handler {
 	}
 
 	router.NotFound(func(w http.ResponseWriter, r *http.Request) {
+		// An unknown path under the API is a mistake a client has to read; anywhere else it
+		// is a page of the application, which owns its own routes. Answering a missing
+		// endpoint with the index would turn a typo in a URL into a blank screen.
+		if deps.Web != nil && !strings.HasPrefix(r.URL.Path, APIPrefix) {
+			deps.Web.ServeHTTP(w, r)
+			return
+		}
 		WriteProblem(w, r, apperr.NotFoundf("no route for %s %s", r.Method, r.URL.Path))
 	})
 	router.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {

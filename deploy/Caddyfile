@@ -1,0 +1,19 @@
+# Caddy terminates TLS and gets its own certificate from Let's Encrypt for {$DOMAIN}.
+#
+# HTTPS is not decoration here: the session cookie is marked Secure outside development, so
+# over plain HTTP the browser would drop it and nobody could stay signed in. A wallet
+# signature is also refused by some extensions on an insecure origin.
+{$DOMAIN} {
+	encode gzip
+
+	# The application is one process: it serves both the API and the interface, so there is
+	# nothing to route between.
+	reverse_proxy app:8080 {
+		header_up X-Forwarded-Proto {scheme}
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}

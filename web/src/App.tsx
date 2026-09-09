@@ -7,7 +7,7 @@ import { Invoices } from "./screens/Invoices";
 import { Market } from "./screens/Market";
 import { Marketplace } from "./screens/Marketplace";
 import { Operator } from "./screens/Operator";
-import { Returns } from "./screens/Returns";
+import { Portfolio } from "./screens/Portfolio";
 import { NewInvoice } from "./screens/NewInvoice";
 import { SignIn } from "./screens/SignIn";
 import { useSession } from "./session";
@@ -45,7 +45,7 @@ export function App() {
           <Route path="/invoices/new" element={<NewInvoice />} />
           <Route path="/invoices/:id" element={<InvoiceDetail />} />
           <Route path="/listings/:id" element={<Listing />} />
-          <Route path="/returns" element={<Returns />} />
+          <Route path="/portfolio" element={<Portfolio />} />
           <Route path="/market" element={<Market />} />
           <Route path="/operator" element={<Operator />} />
           <Route path="*" element={<p className="empty">That page does not exist.</p>} />
@@ -102,8 +102,8 @@ function Masthead() {
         <NavLink to="/invoices" className={({ isActive }) => (isActive ? "is-current" : "")}>
           Receivables
         </NavLink>
-        <NavLink to="/returns" className={({ isActive }) => (isActive ? "is-current" : "")}>
-          Returns
+        <NavLink to="/portfolio" className={({ isActive }) => (isActive ? "is-current" : "")}>
+          Portfolio
         </NavLink>
         <NavLink to="/market" className={({ isActive }) => (isActive ? "is-current" : "")}>
           Market data

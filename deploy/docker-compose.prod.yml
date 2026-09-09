@@ -1,0 +1,69 @@
+# The demo, as it runs on a server: the database, the application, and a reverse proxy that
+# gets a certificate on its own.
+#
+# Run it from the repository root:
+#
+#   docker compose -f deploy/docker-compose.prod.yml build
+#   docker compose -f deploy/docker-compose.prod.yml run --rm app seed
+#   docker compose -f deploy/docker-compose.prod.yml up -d
+#
+# The seed runs as its own container rather than inside the running one, because both the
+# server and the seeder drive the same outbox: whichever is running claims the work, and a
+# seed racing a server is how a demo ends up with data that came from two different builds.
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: factorflow
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: factorflow
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U factorflow -d factorflow"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    # Not published: nothing outside this network has any business reaching the database.
+
+  app:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        VERSION: ${VERSION:-demo}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      FF_ENV: production
+      FF_DATABASE_URL: postgres://factorflow:${POSTGRES_PASSWORD}@postgres:5432/factorflow?sslmode=disable
+      FF_LOG_LEVEL: ${FF_LOG_LEVEL:-info}
+    # Everything else — the Hedera operator, the Graph key, the model key — comes from an
+    # env file that exists only on the server and is never committed.
+    env_file:
+      - ../.env
+    expose:
+      - "8080"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - app
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env, or use localhost}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  pgdata:
+  caddy-data:
+  caddy-config:

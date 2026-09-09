@@ -258,6 +258,38 @@ Stop the server before seeding. Both processes run the same outbox dispatcher, a
 server will happily claim the seed's work — which is correct behaviour for competing
 consumers, and confusing when the two were started with different configuration.
 
+## Deploying it
+
+The process serves both the API and the interface, so a deployment is one container beside
+a database. `FF_WEB_DIR` points at the built application; without it the process is an API
+and nothing else.
+
+On the server, with a domain pointing at it:
+
+```
+cp .env.example .env          # then fill in the keys and set DOMAIN and POSTGRES_PASSWORD
+docker compose -f deploy/docker-compose.prod.yml build
+docker compose -f deploy/docker-compose.prod.yml run --rm app seed
+docker compose -f deploy/docker-compose.prod.yml run --rm app operator 0xYourWalletAddress
+docker compose -f deploy/docker-compose.prod.yml up -d
+```
+
+Caddy gets its own certificate, which is not decoration: the session cookie is marked Secure
+outside development, so over plain HTTP nobody could stay signed in.
+
+The seed runs as its own container rather than inside the running one. Both the server and
+the seeder drive the same outbox, so a seed racing a server is how a demo ends up with data
+that came from two different builds.
+
+The `operator` command exists because the API cannot provide it. An operator is the party
+that admits everyone else, so the first one cannot be admitted by anybody, and registration
+deliberately refuses to mint one — on a fresh server the only operator would otherwise be
+the seed's, whose address is a placeholder nobody holds.
+
+`FF_AUTO_APPROVE=true` admits a wallet the moment it registers. It is off outside
+development, because eligibility is a decision somebody is meant to take; a public demo is
+the honest exception, since a judge who registers at midnight has nobody to admit them.
+
 ## Known gaps
 
 - The money leg is not on chain. Minting is live on Hedera testnet, but an investor pays

@@ -21,6 +21,8 @@ func TestLoadDefaults(t *testing.T) {
 	assert.Equal(t, slog.LevelInfo, cfg.LogLevel)
 	assert.Equal(t, time.Second, cfg.OutboxInterval)
 	assert.True(t, cfg.DemoAuthEnabled(), "development may use the demo header")
+	assert.True(t, cfg.AutoApprove, "development admits a wallet as it registers")
+	assert.Empty(t, cfg.WebDir, "the process is an API unless it is told to serve the app")
 	assert.False(t, cfg.Providers.GraphIsLive(), "no credentials means the in-process provider")
 	assert.False(t, cfg.Providers.CREIsLive())
 	assert.False(t, cfg.Providers.HederaIsLive())
@@ -59,6 +61,33 @@ func TestLoadFromEnvironment(t *testing.T) {
 
 // TestProductionNeedsSomewhereToBePaid keeps a deployment from charging real money into
 // the placeholder address the in-process facilitator uses.
+/*
+ * TestEligibilityFollowsTheEnvironmentUnlessItIsTold. Admitting a participant is a decision
+ * somebody is meant to take, so it is off outside development — and a public demo is the
+ * honest exception, because a judge who registers at midnight has nobody to admit them.
+ */
+func TestEligibilityFollowsTheEnvironmentUnlessItIsTold(t *testing.T) {
+	t.Setenv("FF_ENV", "production")
+	t.Setenv("FF_DATABASE_URL", "postgres://app:secret@db.internal:5432/factorflow")
+	t.Setenv("FF_PAID_RECIPIENT", "0.0.4402")
+
+	strict, err := config.Load()
+	require.NoError(t, err)
+	assert.False(t, strict.AutoApprove, "production waits for an operator")
+	assert.False(t, strict.DemoAuthEnabled(), "and never trusts a header")
+
+	t.Setenv("FF_AUTO_APPROVE", "true")
+	open, err := config.Load()
+	require.NoError(t, err)
+	assert.True(t, open.AutoApprove)
+	assert.False(t, open.DemoAuthEnabled(),
+		"opening registration is not the same as trusting a header, and must not enable one")
+
+	t.Setenv("FF_AUTO_APPROVE", "perhaps")
+	_, err = config.Load()
+	require.Error(t, err)
+}
+
 func TestProductionNeedsSomewhereToBePaid(t *testing.T) {
 	t.Setenv("FF_ENV", "production")
 	t.Setenv("FF_DATABASE_URL", "postgres://app:secret@db.internal:5432/factorflow")

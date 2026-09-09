@@ -290,6 +290,65 @@ func (s *Service) Get(ctx context.Context, actor Actor, invoiceID uuid.UUID) (*r
 	return nil, apperr.NotFoundf("repayment of invoice %s", invoiceID)
 }
 
+// Holding is one position an investor bought and what has become of it.
+//
+// It carries the receivable's own terms as well as the transfer, because "what do I hold"
+// is not answerable by either alone: the transfer says how much and at what price, and the
+// receivable says who owes it, when, and whether the debtor has since paid.
+type Holding struct {
+	Settlement *settlement.Settlement
+	Invoice    *invoice.Invoice
+	// Repayment is the payment this position was paid from, absent until the debtor pays.
+	Repayment *redemption.Repayment
+}
+
+/*
+Holdings returns what an investor bought, newest first.
+
+A transfer that has not finished is included and says so. Hiding it would leave an investor
+whose settlement is stuck looking at a venue that has forgotten the money it took, which is
+the worst possible moment to be told nothing.
+*/
+func (s *Service) Holdings(ctx context.Context, actor Actor, limit int) ([]*Holding, error) {
+	if actor.OrganizationID == uuid.Nil {
+		return nil, apperr.Forbiddenf("an organization is required to list holdings")
+	}
+
+	transfers, err := s.settlements.ListByInvestor(ctx, s.db.Querier(), actor.OrganizationID, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]*Holding, 0, len(transfers))
+	for _, transfer := range transfers {
+		inv, err := s.invoices.Get(ctx, s.db.Querier(), transfer.InvoiceID)
+		if err != nil {
+			if apperr.IsNotFound(err) {
+				// The receivable is gone from under a transfer that names it. That is a
+				// broken invariant rather than a holding, and dropping the row quietly
+				// would be the platform hiding it from the one person it costs.
+				return nil, apperr.Conflictf(
+					"settlement %s names invoice %s, which no longer exists",
+					transfer.ID, transfer.InvoiceID)
+			}
+			return nil, err
+		}
+
+		holding := &Holding{Settlement: transfer, Invoice: inv}
+
+		repayment, err := s.repayments.GetByInvoice(ctx, s.db.Querier(), inv.ID)
+		switch {
+		case err == nil:
+			holding.Repayment = repayment
+		case !apperr.IsNotFound(err):
+			return nil, err
+		}
+
+		out = append(out, holding)
+	}
+	return out, nil
+}
+
 // Received returns the repayments a party has a share in, newest first.
 func (s *Service) Received(ctx context.Context, actor Actor, limit int) ([]*redemption.Repayment, error) {
 	if actor.OrganizationID == uuid.Nil {

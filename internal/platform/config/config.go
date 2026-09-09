@@ -45,6 +45,17 @@ type Config struct {
 
 	DatabaseURL string
 
+	// WebDir is the built single-page application this process serves. Empty means the
+	// process is an API and nothing else, which is what a split deployment wants.
+	WebDir string
+
+	// AutoApprove admits a wallet the moment it registers.
+	//
+	// It defaults to development only, because eligibility is a decision somebody is meant
+	// to take. A public demo is the honest exception: a judge who registers at midnight has
+	// nobody to admit them, and a venue nobody can enter demonstrates nothing.
+	AutoApprove bool
+
 	// OutboxInterval is how often the worker polls for due events.
 	OutboxInterval time.Duration
 
@@ -120,6 +131,7 @@ func Load() (Config, error) {
 		Env:            Environment(strings.ToLower(envOr("FF_ENV", string(Development)))),
 		HTTPAddr:       envOr("FF_HTTP_ADDR", ":8080"),
 		DatabaseURL:    envOr("FF_DATABASE_URL", developmentDatabaseURL),
+		WebDir:         os.Getenv("FF_WEB_DIR"),
 		OutboxInterval: time.Second,
 		Providers: Providers{
 			HederaAccountID:  os.Getenv("FF_HEDERA_ACCOUNT_ID"),
@@ -140,6 +152,15 @@ func Load() (Config, error) {
 			Asset:          envOr("FF_PAID_ASSET", "USDC"),
 			FacilitatorURL: os.Getenv("FF_PAID_FACILITATOR_URL"),
 		},
+	}
+
+	cfg.AutoApprove = cfg.Env == Development
+	if raw := os.Getenv("FF_AUTO_APPROVE"); raw != "" {
+		approve, err := strconv.ParseBool(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("FF_AUTO_APPROVE must be true or false: %w", err)
+		}
+		cfg.AutoApprove = approve
 	}
 
 	level, err := parseLevel(envOr("FF_LOG_LEVEL", "info"))
@@ -205,14 +226,24 @@ func (c Config) DemoAuthEnabled() bool { return c.Env == Development }
 // Summary renders the configuration for a startup log line, with every secret redacted.
 func (c Config) Summary() string {
 	return fmt.Sprintf(
-		"env=%s addr=%s log=%s database=%s graph=%s cre=%s hedera=%s paid=%s",
+		"env=%s addr=%s log=%s database=%s web=%s auto-approve=%t graph=%s cre=%s hedera=%s paid=%s",
 		c.Env, c.HTTPAddr, c.LogLevel,
 		redactURL(c.DatabaseURL),
+		servedOrNot(c.WebDir),
+		c.AutoApprove,
 		liveOrFake(c.Providers.GraphIsLive()),
 		liveOrFake(c.Providers.CREIsLive()),
 		liveOrFake(c.Providers.HederaIsLive()),
 		liveOrFake(c.Paid.IsLive()),
 	)
+}
+
+// servedOrNot says whether this process also serves the interface.
+func servedOrNot(dir string) string {
+	if dir == "" {
+		return "api-only"
+	}
+	return dir
 }
 
 func liveOrFake(live bool) string {

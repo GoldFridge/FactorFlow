@@ -28,6 +28,7 @@ func (h *Handler) Routes(r chi.Router) {
 	r.Get("/invoices/{invoiceID}/repayment", h.get)
 	r.Post("/invoices/{invoiceID}/default", h.markDefault)
 	r.Get("/repayments", h.received)
+	r.Get("/holdings", h.holdings)
 }
 
 // recordRequest is a payment the debtor made.
@@ -74,6 +75,40 @@ type repaymentResponse struct {
 
 type listResponse struct {
 	Items []repaymentResponse `json:"items"`
+}
+
+// holdingResponse is one position an investor bought and what has become of it.
+type holdingResponse struct {
+	SettlementID string `json:"settlement_id"`
+	InvoiceID    string `json:"invoice_id"`
+	AuctionID    string `json:"auction_id"`
+
+	Number    string `json:"number"`
+	DebtorRef string `json:"debtor_ref"`
+	DueAt     string `json:"due_at"`
+	Status    string `json:"status"`
+
+	// Notional is the face value held; Price is what was paid for it. The difference is
+	// the return, and it is left as two numbers rather than one so nobody has to trust
+	// this endpoint's arithmetic.
+	Notional string `json:"notional"`
+	Price    string `json:"price"`
+	Currency string `json:"currency"`
+
+	// State is where the transfer itself got to. A position still in flight says so.
+	State    string `json:"state"`
+	Settled  bool   `json:"settled"`
+	TxID     string `json:"tx_id,omitempty"`
+	SettleAt string `json:"settled_at"`
+
+	// Received is this holder's share of the debtor's payment, once there is one.
+	Received    string `json:"received,omitempty"`
+	IsShortfall bool   `json:"is_shortfall,omitempty"`
+	ReceivedAt  string `json:"received_at,omitempty"`
+}
+
+type holdingsResponse struct {
+	Items []holdingResponse `json:"items"`
 }
 
 func (h *Handler) record(w http.ResponseWriter, r *http.Request) {
@@ -165,6 +200,64 @@ func (h *Handler) received(w http.ResponseWriter, r *http.Request) {
 		items = append(items, toResponse(repayment))
 	}
 	httpserver.WriteJSON(w, r, http.StatusOK, listResponse{Items: items})
+}
+
+func (h *Handler) holdings(w http.ResponseWriter, r *http.Request) {
+	limit := 100
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 {
+			httpserver.WriteProblem(w, r, apperr.Invalid("limit", "must be a positive integer"))
+			return
+		}
+		limit = parsed
+	}
+
+	held, err := h.service.Holdings(r.Context(), actorOf(r), limit)
+	if err != nil {
+		httpserver.WriteProblem(w, r, err)
+		return
+	}
+
+	actor := actorOf(r)
+	items := make([]holdingResponse, 0, len(held))
+	for _, holding := range held {
+		items = append(items, toHoldingResponse(holding, actor.OrganizationID))
+	}
+	httpserver.WriteJSON(w, r, http.StatusOK, holdingsResponse{Items: items})
+}
+
+func toHoldingResponse(holding *Holding, reader uuid.UUID) holdingResponse {
+	transfer, inv := holding.Settlement, holding.Invoice
+
+	out := holdingResponse{
+		SettlementID: transfer.ID.String(),
+		InvoiceID:    inv.ID.String(),
+		AuctionID:    transfer.AuctionID.String(),
+
+		Number:    inv.Number,
+		DebtorRef: inv.DebtorRef,
+		DueAt:     inv.DueAt.Format(time.RFC3339),
+		Status:    inv.Status.String(),
+
+		Notional: transfer.Notional.String(),
+		Price:    transfer.Price.String(),
+		Currency: transfer.Notional.Currency().String(),
+
+		State:    transfer.State.String(),
+		Settled:  transfer.IsFinished(),
+		TxID:     transfer.TxID,
+		SettleAt: transfer.UpdatedAt.Format(time.RFC3339),
+	}
+
+	if holding.Repayment != nil {
+		if share, ok := holding.Repayment.ShareOf(reader); ok {
+			out.Received = share.Amount.String()
+		}
+		out.IsShortfall = holding.Repayment.IsShortfall()
+		out.ReceivedAt = holding.Repayment.ReceivedAt.Format(time.RFC3339)
+	}
+	return out
 }
 
 // toParams turns the request into the domain's own types, failing before anything is

@@ -413,6 +413,62 @@ func TestARepaymentIsReadableByTheHolders(t *testing.T) {
 	assert.Empty(t, none, "an investor sees the payments it held a share of")
 }
 
+/*
+ * TestHoldingsAnswerWhatDoIOwn. Until this existed, an investor could see what it had bid
+ * and what had come back, and nothing in between — the position itself, which is the thing
+ * it actually holds.
+ */
+func TestHoldingsAnswerWhatDoIOwn(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+	inv := f.settledInvoice(t, "6000.00")
+
+	held, err := f.service.Holdings(t.Context(), f.investor, 0)
+	require.NoError(t, err)
+	require.Len(t, held, 1)
+
+	assert.Equal(t, inv.ID, held[0].Invoice.ID)
+	assert.Equal(t, "6000.00", held[0].Settlement.Notional.String())
+	assert.True(t, held[0].Settlement.IsFinished())
+	assert.Nil(t, held[0].Repayment, "the debtor has not paid yet")
+
+	// Once the debtor pays, the same position carries what it returned.
+	_, err = f.record(t, inv, "10000.00")
+	require.NoError(t, err)
+
+	held, err = f.service.Holdings(t.Context(), f.investor, 0)
+	require.NoError(t, err)
+	require.Len(t, held, 1)
+	require.NotNil(t, held[0].Repayment)
+
+	share, ok := held[0].Repayment.ShareOf(f.investor.OrganizationID)
+	require.True(t, ok)
+	assert.Equal(t, "6000.00", share.Amount.String())
+
+	none, err := f.service.Holdings(t.Context(), f.other, 0)
+	require.NoError(t, err)
+	assert.Empty(t, none, "an investor holds what it bought and nothing else")
+}
+
+/*
+ * TestAHoldingInFlightIsStillShown. An investor whose transfer is stuck is looking at money
+ * it has committed, and a venue that hid the position until it completed would be silent at
+ * exactly the moment it matters.
+ */
+func TestAHoldingInFlightIsStillShown(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+	inv := f.settledInvoice(t, "")
+	f.transfer(t, inv, f.investor.OrganizationID, "6000.00", false)
+
+	held, err := f.service.Holdings(t.Context(), f.investor, 0)
+	require.NoError(t, err)
+	require.Len(t, held, 1)
+	assert.False(t, held[0].Settlement.IsFinished(), "and it says so rather than looking done")
+}
+
 // TestRepaymentOverHTTP checks the wire shape and the refusals a caller actually meets.
 func TestRepaymentOverHTTP(t *testing.T) {
 	t.Parallel()
@@ -458,4 +514,19 @@ func TestRepaymentOverHTTP(t *testing.T) {
 		f.call(t, http.MethodPost, path, "operator", `{"amount":"nope","currency":"USD","reference":"x"}`).Code)
 	assert.Equal(t, http.StatusUnprocessableEntity,
 		f.call(t, http.MethodPost, "/api/v1/invoices/not-a-uuid/repayment", "operator", body).Code)
+
+	// A holding carries the terms and the transfer, and the reader's own share once paid.
+	holdings := f.call(t, http.MethodGet, "/api/v1/holdings", "investor", "")
+	require.Equal(t, http.StatusOK, holdings.Code)
+
+	var owned struct {
+		Items []map[string]any `json:"items"`
+	}
+	require.NoError(t, json.Unmarshal(holdings.Body.Bytes(), &owned))
+	require.Len(t, owned.Items, 1)
+	assert.Equal(t, "INV-2026-0007", owned.Items[0]["number"])
+	assert.Equal(t, "6000.00", owned.Items[0]["notional"])
+	assert.Equal(t, "6000.00", owned.Items[0]["received"])
+	assert.Equal(t, true, owned.Items[0]["settled"])
+	assert.Equal(t, "MATURED", owned.Items[0]["status"])
 }

@@ -81,6 +81,33 @@ export interface Repayment {
   created_at: string;
 }
 
+/**
+ * Holding is one position an investor bought and what has become of it.
+ *
+ * Notional and price are two numbers rather than one return, so nobody has to trust this
+ * client's arithmetic; `received` is the reader's own share of what the debtor paid, and is
+ * absent until there is one.
+ */
+export interface Holding {
+  settlement_id: string;
+  invoice_id: string;
+  auction_id: string;
+  number: string;
+  debtor_ref: string;
+  due_at: string;
+  status: string;
+  notional: string;
+  price: string;
+  currency: string;
+  state: string;
+  settled: boolean;
+  tx_id?: string;
+  settled_at: string;
+  received?: string;
+  is_shortfall?: boolean;
+  received_at?: string;
+}
+
 export interface Lot {
   id: string;
   invoice_id: string;
