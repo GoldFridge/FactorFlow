@@ -163,6 +163,22 @@ describe("maturity", () => {
   });
 
   /*
+   * A closed receivable whose payment this reader may not see is not a receivable nobody
+   * paid, and the panel must not say it is. That distinction is invisible to the one party
+   * least able to check it, which is exactly why it is worth a test.
+   */
+  it("does not report a closed receivable as unpaid", async () => {
+    vi.mocked(api.repayment).mockRejectedValue(
+      new ApiError(404, "not found", "not_found", "trace-1"),
+    );
+
+    show(<Maturity invoice={{ ...invoice, status: "MATURED" }} />);
+
+    expect(await screen.findByText(/The debtor paid this receivable/)).toBeInTheDocument();
+    expect(screen.queryByText(/Nothing has been received/)).not.toBeInTheDocument();
+  });
+
+  /*
    * Recording a payment is an operator's job, because the debtor pays the platform: an
    * issuer that could declare the money arrived would decide when its own obligation ended.
    */

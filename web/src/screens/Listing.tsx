@@ -4,6 +4,7 @@ import { api } from "../api/client";
 import { Fact, Grade, Headline, Loader, Panel, Status, useAsync } from "../components";
 import { date, money, shortHash } from "../format";
 import { useSession } from "../session";
+import { Maturity } from "./Maturity";
 import { Price } from "./Price";
 
 /**
@@ -79,6 +80,18 @@ export function Listing() {
               </p>
             </Panel>
           )}
+
+          {["SETTLED", "MATURED", "DEFAULTED"].includes(offer.status) ? (
+            <Maturity
+              invoice={{
+                id: offer.invoice_id,
+                status: offer.status,
+                face: offer.face,
+                currency: offer.currency,
+                due_at: offer.due_at,
+              }}
+            />
+          ) : null}
 
           <Panel title="What is not here">
             <p className="muted small" style={{ margin: 0 }}>

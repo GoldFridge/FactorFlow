@@ -1,10 +1,19 @@
 import { useState } from "react";
 
 import { api, ApiError } from "../api/client";
-import type { Invoice } from "../api/types";
 import { Failure, Fact, Headline, Panel, useAsync } from "../components";
 import { date, dateTime, money } from "../format";
 import { useSession } from "../session";
+
+/** Receivable is the little the panel needs, so both the issuer's record and the venue's
+ * listing of the same paper can render it. */
+export interface Receivable {
+  id: string;
+  status: string;
+  face: string;
+  currency: string;
+  due_at: string;
+}
 
 /**
  * What happened when the receivable came due.
@@ -14,7 +23,7 @@ import { useSession } from "../session";
  * the number a holder cares about is its own share and reading it off a percentage is how
  * disputes start.
  */
-export function Maturity({ invoice }: { invoice: Invoice }) {
+export function Maturity({ invoice }: { invoice: Receivable }) {
   const { auth, actor, isOperator, nameOf } = useSession();
 
   const repayment = useAsync(
@@ -31,12 +40,7 @@ export function Maturity({ invoice }: { invoice: Invoice }) {
     return (
       <Panel title="At maturity">
         <p className="muted" style={{ marginTop: 0 }}>
-          {invoice.status === "SETTLED"
-            ? `Nothing has been received yet. The debtor owes ${money(
-                invoice.face,
-                invoice.currency,
-              )} on ${date(invoice.due_at)}.`
-            : "This receivable has not been sold and settled, so nothing is due back yet."}
+          {waiting(invoice)}
         </p>
         {isOperator && invoice.status === "SETTLED" ? (
           <RecordPayment invoice={invoice} onRecorded={repayment.reload} />
@@ -108,7 +112,7 @@ function RecordPayment({
   invoice,
   onRecorded,
 }: {
-  invoice: Invoice;
+  invoice: Receivable;
   onRecorded: () => void;
 }) {
   const { auth } = useSession();
@@ -201,6 +205,29 @@ function RecordPayment({
       </div>
     </>
   );
+}
+
+/**
+ * waiting says why there is no payment to show, which is not always the same reason.
+ *
+ * A closed receivable whose payment this reader may not see is not a receivable nobody has
+ * paid, and saying so would be a lie told by omission to the one party — a stranger to the
+ * deal — least able to check it.
+ */
+function waiting(invoice: Receivable): string {
+  switch (invoice.status) {
+    case "SETTLED":
+      return `Nothing has been received yet. The debtor owes ${money(
+        invoice.face,
+        invoice.currency,
+      )} on ${date(invoice.due_at)}.`;
+    case "MATURED":
+      return "The debtor paid this receivable. What arrived, and how it was divided, is on record with the parties that held it.";
+    case "DEFAULTED":
+      return "This receivable was closed as defaulted. What the debtor paid, if anything, is on record with the parties that held it.";
+    default:
+      return "This receivable has not been sold and settled, so nothing is due back yet.";
+  }
 }
 
 /** missing turns "no repayment yet" into an answer, and leaves every other failure alone. */
