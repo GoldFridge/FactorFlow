@@ -69,6 +69,14 @@ async function request<T>(path: string, auth: string, init: RequestInit = {}): P
   const parsed: unknown = body ? JSON.parse(body) : {};
 
   if (!response.ok) {
+    if (response.status === 401) {
+      // A session that has expired or was signed out elsewhere is not an error the screen
+      // should render — it is a different person at the keyboard. The provider listens for
+      // this and returns the app to the sign-in screen instead of showing a red box that
+      // says authentication is required.
+      window.dispatchEvent(new CustomEvent(sessionLost));
+    }
+
     const problem = parsed as {
       detail?: string;
       title?: string;
@@ -87,6 +95,9 @@ async function request<T>(path: string, auth: string, init: RequestInit = {}): P
 }
 
 const base = "/api/v1";
+
+/** sessionLost is fired when the server says the caller is no longer authenticated. */
+export const sessionLost = "factorflow:session-lost";
 
 export const api = {
   /**
@@ -119,6 +130,25 @@ export const api = {
 
   organization: (auth: string, id: string) =>
     request<Organization>(`${base}/organizations/${id}`, auth),
+
+  /**
+   * The participants of the venue. Only an operator may ask: the list says who has applied
+   * and who was let in, which is nobody else's business.
+   */
+  organizations: (auth: string) =>
+    request<Items<Organization>>(`${base}/organizations?limit=200`, auth).then((r) => r.items),
+
+  approveOrganization: (auth: string, id: string) =>
+    request<Organization>(`${base}/organizations/${id}/approve`, auth, {
+      method: "POST",
+      body: "{}",
+    }),
+
+  rejectOrganization: (auth: string, id: string, reason: string) =>
+    request<Organization>(`${base}/organizations/${id}/reject`, auth, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    }),
 
   createInvoice: (auth: string, invoice: Record<string, unknown>) =>
     request<Invoice>(`${base}/invoices`, auth, { method: "POST", body: JSON.stringify(invoice) }),

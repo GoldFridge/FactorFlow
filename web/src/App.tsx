@@ -6,6 +6,7 @@ import { Listing } from "./screens/Listing";
 import { Invoices } from "./screens/Invoices";
 import { Market } from "./screens/Market";
 import { Marketplace } from "./screens/Marketplace";
+import { Operator } from "./screens/Operator";
 import { Returns } from "./screens/Returns";
 import { NewInvoice } from "./screens/NewInvoice";
 import { SignIn } from "./screens/SignIn";
@@ -36,6 +37,7 @@ export function App() {
     <div className="app">
       <Masthead />
       <main className="page">
+        <Waiting />
         <Routes>
           <Route path="/" element={<Marketplace />} />
           <Route path="/auctions/:id" element={<AuctionDetail />} />
@@ -45,9 +47,31 @@ export function App() {
           <Route path="/listings/:id" element={<Listing />} />
           <Route path="/returns" element={<Returns />} />
           <Route path="/market" element={<Market />} />
+          <Route path="/operator" element={<Operator />} />
           <Route path="*" element={<p className="empty">That page does not exist.</p>} />
         </Routes>
       </main>
+    </div>
+  );
+}
+
+/**
+ * Waiting says why nothing works yet, to the one person who cannot tell.
+ *
+ * A registered wallet can sign in before an operator has admitted it, and the venue then
+ * reads normally and refuses every action. Without this the refusals look like faults.
+ */
+function Waiting() {
+  const { actor, stage } = useSession();
+
+  if (stage !== "signed-in" || actor.eligible) {
+    return null;
+  }
+  return (
+    <div className="notice" role="status">
+      <strong>{actor.name}</strong> is registered and waiting to be admitted. You can look
+      around the venue; uploading a receivable, bidding and settling stay closed until the
+      platform's operator approves this wallet.
     </div>
   );
 }
@@ -60,7 +84,7 @@ export function App() {
  * verify.
  */
 function Masthead() {
-  const { actor, auth, signOut, busy } = useSession();
+  const { actor, auth, signOut, busy, isOperator } = useSession();
 
   return (
     <header className="masthead">
@@ -84,6 +108,11 @@ function Masthead() {
         <NavLink to="/market" className={({ isActive }) => (isActive ? "is-current" : "")}>
           Market data
         </NavLink>
+        {isOperator ? (
+          <NavLink to="/operator" className={({ isActive }) => (isActive ? "is-current" : "")}>
+            Operator
+          </NavLink>
+        ) : null}
       </nav>
 
       <div className="account">

@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from "react";
 
-import { api, ApiError } from "./api/client";
+import { api, ApiError, sessionLost } from "./api/client";
 import * as wallet from "./wallet";
 import type { Wallet } from "./wallet";
 
@@ -165,6 +165,22 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       live = false;
     };
   }, [load]);
+
+  /**
+   * A session can end while the app is open: the cookie's twelve hours run out, or somebody
+   * signs out in another tab. The next request says 401, and the app returns to the sign-in
+   * screen rather than rendering a refusal on every panel.
+   */
+  useEffect(() => {
+    const lost = () => {
+      setActor(anonymous);
+      setAuth("");
+      setPendingWallet("");
+      setStage((current) => (current === "signed-in" ? "anonymous" : current));
+    };
+    window.addEventListener(sessionLost, lost);
+    return () => window.removeEventListener(sessionLost, lost);
+  }, []);
 
   /** The wallet switching accounts means a different person is at the keyboard. */
   useEffect(

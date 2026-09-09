@@ -111,6 +111,12 @@ func (s *Service) Register(ctx context.Context, p RegisterParams) (*organization
 	if p.Nonce == "" {
 		return nil, apperr.Invalid("nonce", "must not be empty")
 	}
+	if p.Type == organization.TypeOperator {
+		// Registration is open to anyone with a wallet, so it must not be a way to become
+		// the party that approves everyone else, reads every receivable and records what
+		// debtors paid. An operator is created by an operator, or by the seed.
+		return nil, apperr.Forbiddenf("an operator is not created by registering")
+	}
 
 	var created *organization.Organization
 	err := s.db.InTx(ctx, func(q postgres.Querier) error {

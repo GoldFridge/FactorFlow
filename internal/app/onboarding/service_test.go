@@ -254,6 +254,24 @@ func TestRegistrationValidatesItsFacts(t *testing.T) {
 
 // TestAutoApproveIsDevelopmentOnly documents the one behavioural difference between the
 // demo build and a deployed one.
+/*
+ * TestRegistrationCannotMakeAnOperator closes the door registration would otherwise be.
+ * Anyone with a wallet may register, and an operator approves every other participant,
+ * reads every receivable and records what debtors paid — so a registration form that
+ * accepted the word OPERATOR would hand all of that to whoever asked first.
+ */
+func TestRegistrationCannotMakeAnOperator(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t, true)
+	w := wallettest.New(t)
+
+	before := f.store.OrganizationCount()
+	_, err := f.register(t, w, organization.TypeOperator, "Not The Platform")
+	require.ErrorIs(t, err, apperr.ErrForbidden)
+	assert.Equal(t, before, f.store.OrganizationCount(), "nothing was written")
+}
+
 func TestAutoApproveIsDevelopmentOnly(t *testing.T) {
 	t.Parallel()
 
