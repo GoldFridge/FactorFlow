@@ -12,20 +12,16 @@ constraint-aware batch auction.
 
 ## What works today
 
-The deterministic core is complete and runs end to end against PostgreSQL:
+The whole path runs end to end against PostgreSQL, and the demo dataset is produced by
+driving it rather than by writing rows:
 
 ```
-create invoice → attach encrypted document → confidential assessment
-              → live market snapshot → PD/LGD/EL and reserve price
-              → approve → mint the tokenized asset
-              → open an auction → constrained bids → verified allocation certificate
+sign in with a wallet → upload a receivable, encrypted in the browser
+                     → confidential assessment against a live market snapshot
+                     → PD/LGD/EL and a reserve price → approve → mint on Hedera testnet
+                     → open a batch → constrained bids → verified allocation certificate
+                     → settle the transfers → the debtor pays → the money is divided
 ```
-
-Verified by running it against PostgreSQL: an invoice created over the API is assessed and
-priced by the background worker, tokenized through the issuer port, listed as a lot at the
-price the risk model published, bid on by two investors, and cleared. The financed invoice
-ends at `ALLOCATED`, the winning bid at `ALLOCATED`, and the losing one is told which of its
-own limits refused the lot.
 
 | Area | State |
 |---|---|
@@ -33,20 +29,22 @@ own limits refused the lot.
 | Invoice lifecycle | Full state machine, optimistic concurrency, retry per failed stage |
 | Risk model `risk-v1` | Published coefficients, decimal sigmoid, clamps, reproducible |
 | Pricing | Benchmark + risk/liquidity/concentration premiums, reserve price |
-| Market data | Weighted median benchmark, winsorization, TTL, hashed snapshots |
+| Market data | **Live** Ethereum lending markets through The Graph gateway, hashed snapshots |
 | Batch auction | Min-cost max-flow, minimum lots, exposure repair, allocation certificate |
-| Auction API | Open a batch, bid, clear, read allocations and rejection reasons |
 | Independent verifier | Recomputes every constraint; 20 tampering cases covered |
+| Settlement | Saga with submit / consensus / mirror / account steps and reconciliation |
+| Maturity | Repayment recorded by an operator, divided exactly among the holders |
+| Tokenization | **Live** minting on Hedera testnet through the HTS adapter |
+| Documents | AES-GCM in the browser; the platform stores bytes it cannot read |
+| Identity | Wallet sign-in over EIP-191, multi-wallet choice over EIP-6963 |
+| Disclosure | An offered receivable is readable by the venue; an unlisted one is not |
 | Persistence | Schema, repositories, transactional outbox, idempotent writes |
-| HTTP API | Invoice endpoints, RFC 9457 problems, trace ids, security headers |
-| Tokenization | Asset lifecycle, issuer port, in-process issuer |
-| Application layer | Assessment and issuance workers, opening and clearing auctions |
-| Confidential workflow | Port plus a deterministic in-process implementation |
+| HTTP API | 41 endpoints, RFC 9457 problems, trace ids, security headers |
+| Web | React + TypeScript, exact decimals rendered without floats |
 
-Not implemented yet: wallet authentication, the Hedera ATS adapter, the settlement saga,
-x402 paid endpoints, the live Graph gateway adapter, the live CRE client, and the React
-frontend. Every one of those sits behind a port that the in-process implementation already
-satisfies, so the path they plug into is the path the tests exercise.
+Still behind in-process ports rather than live services: the confidential workflow (Chainlink
+CRE), the x402 paid endpoints, and the chain transfer executor — settlement moves assets on
+the local ledger even when minting is live on Hedera.
 
 ## Architecture
 
@@ -262,12 +260,20 @@ consumers, and confusing when the two were started with different configuration.
 
 ## Known gaps
 
+- The money leg is not on chain. Minting is live on Hedera testnet, but an investor pays
+  and is paid off chain: there is no escrow under a bid, no delivery-versus-payment, and no
+  burn at redemption. The blocker is not the adapter — it is that the seeded investors are
+  `0x` addresses with no Hedera account, so nothing can be transferred to them.
 - Clearing 500 invoices against 2000 bids takes about 31 seconds against the
   specification's 2 second target. `BenchmarkClearTargetBatch` measures it; the cost is
   re-solving the flow once per repair round, and a warm-started or network-simplex solver
   is the fix.
-- Wallet authentication, the chain adapters and the paid endpoints are ports without live
-  implementations, as listed above.
+- The confidential workflow and the paid endpoints run in process. Both are ports with
+  working in-process implementations, so the path they plug into is the path the tests
+  exercise.
+- No double-pledge registry: nothing yet stops the same document being sold twice under two
+  invoices, which the stored commitment already makes detectable.
+- No operator screen beyond the one action maturity needs, and no deployment.
 
 ## Documentation
 
