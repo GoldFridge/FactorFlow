@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/GoldFridge/factorflow/internal/app/assessment"
+	"github.com/GoldFridge/factorflow/internal/app/collections"
 	"github.com/GoldFridge/factorflow/internal/app/demo"
 	"github.com/GoldFridge/factorflow/internal/app/issuance"
 	"github.com/GoldFridge/factorflow/internal/app/marketplace"
@@ -23,6 +24,7 @@ import (
 	"github.com/GoldFridge/factorflow/internal/platform/outbox"
 	"github.com/GoldFridge/factorflow/internal/platform/pgtest"
 	"github.com/GoldFridge/factorflow/internal/platform/postgres"
+	"github.com/GoldFridge/factorflow/internal/redemption"
 	"github.com/GoldFridge/factorflow/internal/risk"
 	"github.com/GoldFridge/factorflow/internal/settlement"
 	"github.com/GoldFridge/factorflow/internal/tokenization"
@@ -84,10 +86,15 @@ func wire(t *testing.T, db *postgres.DB) (*demo.Seeder, *marketplace.Service) {
 	dispatcher.Register(invoice.TopicTokenize, issuanceWorker.Handle)
 	dispatcher.Register(marketplace.TopicSettle, settlementWorker.Handle)
 
+	collectionService := collections.NewService(collections.Config{
+		DB: db, Invoices: invoices, Settlements: settlements,
+		Repayments: redemption.NewPostgresRepository(), Audit: trail, Now: now, IDs: ids,
+	})
+
 	seeder := demo.NewSeeder(demo.Config{
 		DB: db, Organizations: organizations, Invoices: invoiceService,
-		Marketplace: marketplaceService, Auctions: auctionService,
-		Dispatcher: dispatcher, Clock: clk,
+		Marketplace: marketplaceService, Collections: collectionService,
+		Auctions: auctionService, Dispatcher: dispatcher, Clock: clk,
 	})
 	return seeder, marketplaceService
 }
@@ -119,6 +126,7 @@ func TestSeedProducesEveryStageOfTheLifecycle(t *testing.T) {
 	assert.Equal(t, 2, summary.Auctions)
 	assert.Equal(t, 4, summary.Bids)
 	assert.Equal(t, 1, summary.Settlements)
+	assert.Equal(t, 1, summary.Repayments)
 
 	invoices := invoice.NewPostgresRepository()
 	statuses := map[invoice.Status]int{}
@@ -133,7 +141,46 @@ func TestSeedProducesEveryStageOfTheLifecycle(t *testing.T) {
 	assert.Equal(t, 1, statuses[invoice.StatusDraft], "one receivable is still being prepared")
 	assert.Equal(t, 1, statuses[invoice.StatusAssessed], "one is waiting for its issuer to approve the price")
 	assert.Equal(t, 1, statuses[invoice.StatusAuctionOpen], "one is on the market")
-	assert.Equal(t, 1, statuses[invoice.StatusSettled], "and one has been financed end to end")
+	assert.Equal(t, 1, statuses[invoice.StatusMatured],
+		"and one has been financed end to end, down to the debtor paying it")
+}
+
+/*
+ * TestSeededRepaymentDividesWhatTheDebtorPaid closes the story the rest of the seed sets
+ * up. A demo that stops at "somebody bought this" never shows the number an investor
+ * actually buys for, so the finished receivable is paid and the money divided — by the
+ * service an operator would use, not by figures written down here.
+ */
+func TestSeededRepaymentDividesWhatTheDebtorPaid(t *testing.T) {
+	db := pgtest.New(t)
+	ctx := context.Background()
+
+	seeder, _ := wire(t, db)
+	_, err := seeder.Run(ctx)
+	require.NoError(t, err)
+
+	repayments, err := redemption.NewPostgresRepository().
+		ListForParty(ctx, db.Querier(), demo.InvestorAID, 10)
+	require.NoError(t, err)
+	require.Len(t, repayments, 1, "the investor that was allocated the batch was paid")
+
+	paid := repayments[0]
+	assert.False(t, paid.IsShortfall(), "the demo debtor pays what it owes")
+
+	share, ok := paid.ShareOf(demo.InvestorAID)
+	require.True(t, ok)
+	assert.True(t, share.Amount.IsPositive())
+
+	// Every unit the debtor paid was handed to somebody.
+	total := share.Amount
+	for _, other := range paid.Shares {
+		if other.PartyID == demo.InvestorAID {
+			continue
+		}
+		total, err = total.Add(other.Amount)
+		require.NoError(t, err)
+	}
+	assert.Equal(t, paid.Amount, total)
 }
 
 // TestSeededAuctionsAreBiddableAndSettled checks the two batches a demo needs: one a judge
@@ -200,7 +247,7 @@ func TestSeededDataHasAnAuditTrail(t *testing.T) {
 	_, err := seeder.Run(ctx)
 	require.NoError(t, err)
 
-	invoices, err := invoice.NewPostgresRepository().ListByStatus(ctx, db.Querier(), invoice.StatusSettled, 10)
+	invoices, err := invoice.NewPostgresRepository().ListByStatus(ctx, db.Querier(), invoice.StatusMatured, 10)
 	require.NoError(t, err)
 	require.Len(t, invoices, 1)
 
@@ -223,6 +270,7 @@ func TestSeededDataHasAnAuditTrail(t *testing.T) {
 		invoice.ActionAuctionOpened,
 		marketplace.ActionInvoiceAllocated,
 		marketplace.ActionInvoiceSettled,
+		collections.ActionRepaid,
 	} {
 		assert.True(t, actions[expected], "the timeline is missing %s", expected)
 	}

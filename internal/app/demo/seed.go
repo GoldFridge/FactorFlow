@@ -19,6 +19,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/GoldFridge/factorflow/internal/app/collections"
 	"github.com/GoldFridge/factorflow/internal/app/marketplace"
 	"github.com/GoldFridge/factorflow/internal/auction"
 	"github.com/GoldFridge/factorflow/internal/invoice"
@@ -44,6 +45,7 @@ type Seeder struct {
 	invoices      *invoice.Service
 	marketplace   *marketplace.Service
 	auctions      *auction.Service
+	collections   *collections.Service
 	dispatcher    *outbox.Dispatcher
 	clock         *clock.Clock
 }
@@ -63,6 +65,9 @@ type Config struct {
 	Invoices      *invoice.Service
 	Marketplace   *marketplace.Service
 	Auctions      *auction.Service
+	// Collections closes the story the rest of the seed sets up: the debtor of the settled
+	// receivable pays, and the money is divided among the parties that held it.
+	Collections *collections.Service
 	// Dispatcher delivers the outbox between steps, so the seeded data passes through the
 	// assessment and issuance workers exactly as a real upload would.
 	Dispatcher *outbox.Dispatcher
@@ -83,6 +88,7 @@ func NewSeeder(cfg Config) *Seeder {
 		invoices:      cfg.Invoices,
 		marketplace:   cfg.Marketplace,
 		auctions:      cfg.Auctions,
+		collections:   cfg.Collections,
 		dispatcher:    cfg.Dispatcher,
 		clock:         cfg.Clock,
 	}
@@ -154,6 +160,7 @@ type Summary struct {
 	Auctions      int
 	Bids          int
 	Settlements   int
+	Repayments    int
 	// Skipped reports that the data was already there and nothing was created.
 	Skipped bool
 }
@@ -238,6 +245,20 @@ func (s *Seeder) Run(ctx context.Context) (Summary, error) {
 		return summary, fmt.Errorf("bidding into the demo auction: %w", err)
 	}
 	summary.Bids += bids
+
+	// The debtor of the financed receivable pays, which is the only thing that turns a sold
+	// receivable into a return: without it the demo stops at "somebody bought this" and
+	// never shows the number an investor actually buys for.
+	//
+	// It is done last, after every invoice exists, and that ordering is load-bearing. The
+	// demo's identifiers come from a counter, and a receivable's risk features are derived
+	// from its own id, so anything that takes an identifier before an invoice is created
+	// changes that invoice's grade — and a grade far enough off is a price the model
+	// refuses to publish at all.
+	if err := s.repaid(ctx, financed); err != nil {
+		return summary, fmt.Errorf("recording the demo repayment: %w", err)
+	}
+	summary.Repayments++
 
 	return summary, nil
 }
@@ -417,6 +438,24 @@ func (s *Seeder) settledAuction(ctx context.Context, issuerID uuid.UUID, invoice
 		return result, err
 	}
 	return result, nil
+}
+
+// repaid records the debtor's payment against a settled receivable.
+//
+// It goes through the same service an operator would use, so the seeded division is the
+// one the code produces rather than a set of numbers written down here.
+func (s *Seeder) repaid(ctx context.Context, inv *invoice.Invoice) error {
+	_, err := s.collections.Record(ctx,
+		collections.Actor{OrganizationID: OperatorID, Operator: true},
+		collections.RecordParams{
+			InvoiceID: inv.ID,
+			Amount:    inv.Face,
+			Reference: "SWIFT-DEMO-" + inv.Number,
+			// An hour ago rather than this instant: a payment recorded at exactly the time
+			// the page is opened reads as something the demo did, not something a debtor did.
+			ReceivedAt: s.now().Add(-time.Hour),
+		})
+	return err
 }
 
 // drain delivers the outbox until it is empty.

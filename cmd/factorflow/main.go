@@ -107,7 +107,8 @@ func seed() error {
 		slog.Int("invoices", summary.Invoices),
 		slog.Int("auctions", summary.Auctions),
 		slog.Int("bids", summary.Bids),
-		slog.Int("settlements", summary.Settlements))
+		slog.Int("settlements", summary.Settlements),
+		slog.Int("repayments", summary.Repayments))
 	return nil
 }
 
@@ -372,6 +373,7 @@ func wire(cfg config.Config, db *postgres.DB, clk *clock.Clock, ids func() uuid.
 		Organizations: organizations,
 		Invoices:      invoiceService,
 		Marketplace:   marketplaceService,
+		Collections:   collectionService,
 		Auctions:      auctionService,
 		Dispatcher:    dispatcher,
 		Clock:         clk,

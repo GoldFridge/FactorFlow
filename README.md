@@ -248,7 +248,11 @@ refuses before the due date.
 
 A receivable is repaid once: the unique constraint on the repayment says so, and a retried
 request returns the payment already recorded rather than crediting every holder twice.
-`GET /repayments` is a party's own record of what came back.
+`GET /repayments` is a party's own record of what came back, and the Returns screen is that
+list with the reader's own share of each payment rather than the payment's total.
+
+The seeded demo ends here too: the financed receivable's debtor pays, so the finished story
+runs from an encrypted upload to money divided among the parties that held the paper.
 
 ## Reseeding
 
