@@ -8,7 +8,10 @@
 package invoice
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
@@ -58,6 +61,40 @@ type Invoice struct {
 	Version   int64
 	CreatedAt time.Time
 	UpdatedAt time.Time
+}
+
+/*
+Fingerprint is the economic identity of a receivable: which debtor owes how much, under
+which number, by when.
+
+The issuer is deliberately not part of it. The fraud factoring actually suffers from is the
+same receivable sold to two financiers — here, two accounts — each lending against one
+payment that can only arrive once. A fingerprint that included the seller would agree with
+both of them.
+
+It is a hash rather than the terms themselves so that the value can be compared, indexed and
+logged without republishing who owes what to whom. Production needs the debtor's
+confirmation or a receivables registry; this is the honest demo version of that.
+*/
+func Fingerprint(debtorRef, number string, face money.Amount, dueAt time.Time) string {
+	// The canonical form is what makes two spellings of the same receivable one
+	// fingerprint. It is mirrored in the migration that backfilled existing rows, and a
+	// test recomputes a stored row to prove the two still agree.
+	canonical := strings.Join([]string{
+		strings.ToLower(strings.TrimSpace(debtorRef)),
+		strings.TrimSpace(number),
+		strconv.FormatInt(face.Minor(), 10),
+		face.Currency().String(),
+		dueAt.UTC().Format("2006-01-02"),
+	}, "|")
+
+	sum := sha256.Sum256([]byte(canonical))
+	return hex.EncodeToString(sum[:])
+}
+
+// Fingerprint returns this receivable's own.
+func (i *Invoice) Fingerprint() string {
+	return Fingerprint(i.DebtorRef, i.Number, i.Face, i.DueAt)
 }
 
 // NewParams carries the facts an issuer supplies when creating a draft.

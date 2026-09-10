@@ -154,3 +154,39 @@ func fieldNames(fields []*apperr.FieldError) []string {
 	}
 	return names
 }
+
+/*
+ * TestFingerprintIdentifiesTheReceivableNotTheSeller is the rule the double-financing guard
+ * rests on. The fraud factoring suffers from is one receivable sold to two financiers, so a
+ * fingerprint that included the seller would agree with both of them and catch nothing.
+ */
+func TestFingerprintIdentifiesTheReceivableNotTheSeller(t *testing.T) {
+	t.Parallel()
+
+	due := time.Date(2026, time.December, 24, 0, 0, 0, 0, time.UTC)
+	base := invoice.Fingerprint("ACME Logistics GmbH", "INV-2026-0007", money.MustParse("10000.00", money.USD), due)
+
+	assert.Regexp(t, "^[0-9a-f]{64}$", base)
+	assert.Equal(t, base,
+		invoice.Fingerprint("  acme logistics gmbh ", " INV-2026-0007 ", money.MustParse("10000.00", money.USD), due),
+		"spelling and spacing are not different receivables")
+
+	// The same paper, offered by a second account, fingerprints identically — which is the
+	// whole point.
+	assert.Equal(t, base,
+		invoice.Fingerprint("ACME Logistics GmbH", "INV-2026-0007", money.MustParse("10000.00", money.USD),
+			due.Add(6*time.Hour)),
+		"a due date is a day, not an instant")
+
+	for _, other := range []string{
+		invoice.Fingerprint("ACME Logistics AG", "INV-2026-0007", money.MustParse("10000.00", money.USD), due),
+		invoice.Fingerprint("ACME Logistics GmbH", "INV-2026-0008", money.MustParse("10000.00", money.USD), due),
+		invoice.Fingerprint("ACME Logistics GmbH", "INV-2026-0007", money.MustParse("10000.01", money.USD), due),
+		invoice.Fingerprint("ACME Logistics GmbH", "INV-2026-0007",
+			money.MustParse("10000.00", money.EUR), due),
+		invoice.Fingerprint("ACME Logistics GmbH", "INV-2026-0007", money.MustParse("10000.00", money.USD),
+			due.AddDate(0, 0, 1)),
+	} {
+		assert.NotEqual(t, base, other, "a different term is a different receivable")
+	}
+}

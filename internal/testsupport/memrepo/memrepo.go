@@ -314,6 +314,18 @@ func (r *invoiceRepo) Create(_ context.Context, _ postgres.Querier, inv *invoice
 	if _, exists := s.invoices[inv.ID]; exists {
 		return apperr.Conflictf("invoice %s already exists", inv.ID)
 	}
+	// The database allows one live receivable per set of terms, across the venue. Without
+	// the same rule here, an application test would pass a double-financing the database
+	// refuses — which is the one place this rule must not be discovered late.
+	for _, stored := range s.invoices {
+		if stored.Status.IsTerminal() {
+			continue
+		}
+		if stored.Fingerprint() == inv.Fingerprint() {
+			return apperr.Conflictf("a receivable with these terms is already being financed")
+		}
+	}
+
 	s.invoices[inv.ID] = *inv
 	return nil
 }

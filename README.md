@@ -258,6 +258,19 @@ Stop the server before seeding. Both processes run the same outbox dispatcher, a
 server will happily claim the seed's work — which is correct behaviour for competing
 consumers, and confusing when the two were started with different configuration.
 
+## Double financing
+
+A receivable is fingerprinted by its economic identity — which debtor owes how much, under
+which number, by when — and the venue allows one live receivable per fingerprint. The
+issuer is deliberately not part of it: the fraud factoring actually suffers from is the same
+paper sold to two financiers, and a fingerprint that included the seller would agree with
+both of them.
+
+A receivable that was rejected, matured or defaulted releases its terms, because whatever it
+referred to has either been paid or written off. Production needs the debtor's confirmation
+or a receivables registry; a hash of the terms is the honest demo version of that, and the
+refusal says which facts collided rather than only "conflict".
+
 ## Deploying it
 
 The process serves both the API and the interface, so a deployment is one container beside

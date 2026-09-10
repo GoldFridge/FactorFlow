@@ -299,3 +299,81 @@ func TestInvoiceRequiresAKnownIssuer(t *testing.T) {
 	err = invoice.NewPostgresRepository().Create(context.Background(), db.Querier(), inv)
 	require.ErrorIs(t, err, apperr.ErrConflict)
 }
+
+// terms builds a receivable with the given terms, for whichever issuer is selling it.
+func terms(t *testing.T, issuerID uuid.UUID, number string) *invoice.Invoice {
+	t.Helper()
+
+	inv, err := invoice.New(invoice.NewParams{
+		ID:        uuid.New(),
+		IssuerID:  issuerID,
+		DebtorRef: "ACME Logistics GmbH",
+		Number:    number,
+		Face:      money.MustParse("10000.00", money.USD),
+		IssuedAt:  testNow,
+		DueAt:     testNow.Add(60 * 24 * time.Hour),
+	}, testNow)
+	require.NoError(t, err)
+	return inv
+}
+
+/*
+ * TestOneLiveReceivablePerTermsAcrossTheVenue is the double-financing guard the
+ * specification asks for. The existing rule stops one issuer submitting the same invoice
+ * twice; this is the fraud factoring actually suffers from — the same receivable sold to a
+ * second financier, here a second account, each lending against one payment that can only
+ * arrive once.
+ */
+func TestOneLiveReceivablePerTermsAcrossTheVenue(t *testing.T) {
+	db := pgtest.New(t)
+	ctx := context.Background()
+	repo := invoice.NewPostgresRepository()
+
+	first := seedIssuer(t, db, 41)
+	second := seedIssuer(t, db, 42)
+
+	original := terms(t, first.ID, "INV-2026-0500")
+	require.NoError(t, repo.Create(ctx, db.Querier(), original))
+
+	// A different account, the same paper.
+	duplicate := terms(t, second.ID, "INV-2026-0500")
+	require.ErrorIs(t, repo.Create(ctx, db.Querier(), duplicate), apperr.ErrConflict)
+
+	// Different terms are a different receivable and go through.
+	other := terms(t, second.ID, "INV-2026-0501")
+	require.NoError(t, repo.Create(ctx, db.Querier(), other))
+
+	// A receivable that was rejected releases its terms: whatever it referred to is no
+	// longer being financed here.
+	require.NoError(t, original.Reject("the debtor disputes it", testNow))
+	require.NoError(t, repo.Update(ctx, db.Querier(), original, 1))
+	require.NoError(t, repo.Create(ctx, db.Querier(), terms(t, second.ID, "INV-2026-0500")))
+}
+
+/*
+ * TestStoredFingerprintMatchesTheDomain pins the migration's backfill to the Go
+ * implementation. Two expressions of one rule drift silently, and the drift would only
+ * surface as a guard that quietly stopped guarding.
+ */
+func TestStoredFingerprintMatchesTheDomain(t *testing.T) {
+	db := pgtest.New(t)
+	ctx := context.Background()
+
+	issuer := seedIssuer(t, db, 43)
+	inv := terms(t, issuer.ID, "INV-2026-0502")
+	require.NoError(t, invoice.NewPostgresRepository().Create(ctx, db.Querier(), inv))
+
+	var stored, recomputed string
+	require.NoError(t, db.Querier().QueryRow(ctx, `
+		SELECT fingerprint,
+		       encode(sha256(convert_to(
+		           lower(btrim(debtor_ref)) || '|' ||
+		           btrim(number) || '|' ||
+		           face_minor::text || '|' ||
+		           currency || '|' ||
+		           to_char(due_at AT TIME ZONE 'UTC', 'YYYY-MM-DD'), 'UTF8')), 'hex')
+		  FROM invoices WHERE id = $1`, inv.ID).Scan(&stored, &recomputed))
+
+	assert.Equal(t, inv.Fingerprint(), stored, "what Go wrote is what the domain computes")
+	assert.Equal(t, stored, recomputed, "and the migration's expression agrees with it")
+}

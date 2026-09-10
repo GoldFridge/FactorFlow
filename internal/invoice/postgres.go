@@ -40,15 +40,16 @@ func (r *PostgresRepository) Create(ctx context.Context, q postgres.Querier, inv
 	const query = `
 		INSERT INTO invoices (
 			id, issuer_id, debtor_ref, number, face_minor, currency, issued_at, due_at,
-			status, failed_from, reason, assessment_id, asset_id, version, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`
+			status, failed_from, reason, assessment_id, asset_id, version, created_at, updated_at,
+			fingerprint)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`
 
 	_, err := q.Exec(ctx, query,
 		inv.ID, inv.IssuerID, inv.DebtorRef, inv.Number,
 		inv.Face.Minor(), inv.Face.Currency().String(), inv.IssuedAt, inv.DueAt,
 		inv.Status.String(), inv.FailedFrom.String(), inv.Reason,
 		nullableUUID(inv.AssessmentID), nullableUUID(inv.AssetID),
-		inv.Version, inv.CreatedAt, inv.UpdatedAt)
+		inv.Version, inv.CreatedAt, inv.UpdatedAt, inv.Fingerprint())
 	return postgres.Translate(err)
 }
 

@@ -134,6 +134,15 @@ func (s *Service) Create(ctx context.Context, actor Actor, p CreateParams) (*Inv
 
 	if err := s.db.InTx(ctx, func(q postgres.Querier) error {
 		if err := s.repo.Create(ctx, q, inv); err != nil {
+			// The storage rule is one live receivable per set of terms, across the venue.
+			// What it catches is the same paper offered twice, and the refusal has to say
+			// so: "conflict" alone reads like a retry, and a seller who is not defrauding
+			// anybody needs to know which of their facts collided.
+			if apperr.IsConflict(err) {
+				return apperr.Conflictf(
+					"a receivable from %s numbered %s for %s due %s is already being financed",
+					inv.DebtorRef, inv.Number, inv.Face, inv.DueAt.UTC().Format("2006-01-02"))
+			}
 			return err
 		}
 		return s.record(ctx, q, actor, ActionCreated, inv, nil)
