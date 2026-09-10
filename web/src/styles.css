@@ -964,6 +964,10 @@ th.num {
 .gate {
   display: grid;
   place-items: center;
+  /* The card is no longer the only child: the way out for a first-time visitor sits under
+     it, and stretched rows would push it to the bottom of the window as an afterthought. */
+  align-content: center;
+  gap: 18px;
   min-height: 100vh;
   padding: 32px 20px;
 }
@@ -1136,4 +1140,334 @@ th.num {
 
 .points li:last-child {
   margin-bottom: 0;
+}
+
+/* ------------------------------------------------------------------- about
+ *
+ * The one page that is read rather than used, and the only route that renders without a
+ * session. It is wider and quieter than the venue: long lines of prose set at reading
+ * length, sections separated by space instead of borders, and the same jade accent used
+ * once per section so that emphasis still means something.
+ */
+
+.about {
+  display: flex;
+  min-height: 100%;
+  flex-direction: column;
+}
+
+.about main {
+  width: min(1080px, 100%);
+  margin: 0 auto;
+  padding: 0 28px;
+}
+
+.about h2 {
+  font-size: 26px;
+  font-weight: 640;
+  letter-spacing: -0.02em;
+  margin: 0 0 8px;
+}
+
+.about h3 {
+  font-size: 15px;
+  font-weight: 620;
+  margin: 0 0 6px;
+}
+
+.about p {
+  max-width: 68ch;
+}
+
+.about-bar {
+  display: flex;
+  align-items: center;
+  gap: 32px;
+  padding: 0 28px;
+  height: 62px;
+  background: rgba(8, 13, 12, 0.72);
+  backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+
+.about-nav {
+  display: flex;
+  gap: 22px;
+  margin-left: auto;
+  color: var(--text-muted);
+  font-weight: 520;
+}
+
+.about-nav a:hover {
+  color: var(--accent-bright);
+}
+
+/* ------------------------------------------------------------ about · hero */
+
+.about-hero {
+  padding: 76px 0 8px;
+}
+
+.about-eyebrow {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--accent-line);
+  background: var(--accent-soft);
+  color: var(--accent-bright);
+  font-size: 11px;
+  font-weight: 620;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.about-hero h1 {
+  margin: 22px 0 0;
+  font-size: clamp(28px, 4.4vw, 46px);
+  line-height: 1.08;
+  font-weight: 660;
+  letter-spacing: -0.035em;
+  background: linear-gradient(150deg, var(--text) 34%, var(--accent-bright));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.about-lede {
+  margin: 22px 0 0;
+  font-size: 16px;
+  line-height: 1.65;
+  color: var(--text-muted);
+}
+
+.about-cta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 28px 0 32px;
+}
+
+.about-cta .button {
+  padding: 10px 20px;
+}
+
+.about-disclaimer {
+  max-width: 74ch;
+  border-color: var(--border-strong);
+  color: var(--text-muted);
+}
+
+.about-disclaimer strong {
+  color: var(--text);
+}
+
+/* --------------------------------------------------------- about · numbers */
+
+.about-numbers {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 1px;
+  margin: 46px 0 12px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.about-number {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 20px 22px;
+  background: var(--surface);
+}
+
+.about-number .num {
+  text-align: left;
+  font-size: 30px;
+  font-weight: 680;
+  letter-spacing: -0.03em;
+  color: var(--accent-bright);
+}
+
+/* -------------------------------------------------------- about · sections */
+
+.about-section {
+  padding: 68px 0 0;
+}
+
+.about-sub {
+  margin: 0 0 26px;
+}
+
+/* The path is a sequence, so it is drawn as one: a line the steps hang from. */
+
+.about-path {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-left: 1px solid var(--border);
+}
+
+.about-path li {
+  display: flex;
+  gap: 18px;
+  padding: 0 0 26px 26px;
+  position: relative;
+}
+
+.about-path li:last-child {
+  padding-bottom: 0;
+}
+
+.about-step {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  color: var(--accent-bright);
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  position: absolute;
+  left: -14px;
+  top: -2px;
+}
+
+.about-path h3 {
+  margin-bottom: 4px;
+}
+
+.about-path p {
+  margin: 0;
+}
+
+/* ------------------------------------------------------------ about · grid */
+
+.about-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 14px;
+}
+
+.about-grid.is-faq {
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+}
+
+.about-grid.is-three {
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.about-card {
+  padding: 20px 22px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  transition: border-color 140ms ease;
+}
+
+.about-card:hover {
+  border-color: var(--border-strong);
+}
+
+.about-card header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.about-card header h3 {
+  margin: 0;
+}
+
+.about-card p {
+  margin: 0;
+  line-height: 1.6;
+}
+
+.about-card .hash {
+  display: inline-block;
+  margin-top: 12px;
+  color: var(--accent-bright);
+}
+
+.about-card .hash:hover {
+  color: var(--accent);
+}
+
+/* Two states the venue does not otherwise need: one integration is simulated and says so,
+ * and the model is neither live nor absent but held inside a boundary. */
+
+.pill.is-simulated {
+  background: var(--caution-soft);
+  color: var(--caution);
+}
+
+.pill.is-bounded {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.about-tree {
+  margin: 18px 0 0;
+  padding: 20px 22px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-deep);
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.75;
+  overflow-x: auto;
+}
+
+/* ------------------------------------------------------------ about · foot */
+
+.about-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+  width: min(1080px, 100%);
+  margin: 88px auto 0;
+  padding: 26px 28px 40px;
+  border-top: 1px solid var(--border);
+}
+
+@media (max-width: 720px) {
+  .about-nav {
+    display: none;
+  }
+
+  .about-hero {
+    padding-top: 48px;
+  }
+
+  .about-section {
+    padding-top: 52px;
+  }
+}
+
+/* The only way past the gate that is not a wallet: an explanation. */
+.gate-aside {
+  margin: 0;
+  text-align: center;
+}
+
+.gate-aside a {
+  color: var(--accent-bright);
+}
+
+.gate-aside a:hover {
+  color: var(--accent);
 }

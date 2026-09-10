@@ -1,5 +1,6 @@
-import { NavLink, Route, Routes } from "react-router-dom";
+import { NavLink, Outlet, Route, Routes } from "react-router-dom";
 
+import { About } from "./screens/About";
 import { AuctionDetail } from "./screens/AuctionDetail";
 import { InvoiceDetail } from "./screens/InvoiceDetail";
 import { Listing } from "./screens/Listing";
@@ -12,7 +13,34 @@ import { NewInvoice } from "./screens/NewInvoice";
 import { SignIn } from "./screens/SignIn";
 import { useSession } from "./session";
 
+/**
+ * Everything in the venue is behind a wallet, which leaves a first-time visitor looking at a
+ * sign-in screen with nothing to explain what they have arrived at. /about is the one public
+ * route, and it sits outside the layout that holds the gate rather than inside it.
+ */
 export function App() {
+  return (
+    <Routes>
+      <Route path="/about" element={<About />} />
+
+      <Route element={<Venue />}>
+        <Route path="/" element={<Marketplace />} />
+        <Route path="/auctions/:id" element={<AuctionDetail />} />
+        <Route path="/invoices" element={<Invoices />} />
+        <Route path="/invoices/new" element={<NewInvoice />} />
+        <Route path="/invoices/:id" element={<InvoiceDetail />} />
+        <Route path="/listings/:id" element={<Listing />} />
+        <Route path="/portfolio" element={<Portfolio />} />
+        <Route path="/market" element={<Market />} />
+        <Route path="/operator" element={<Operator />} />
+        <Route path="*" element={<p className="empty">That page does not exist.</p>} />
+      </Route>
+    </Routes>
+  );
+}
+
+/** Venue is the signed-in application: the gate, the masthead, and whatever route matched. */
+function Venue() {
   const { stage } = useSession();
 
   if (stage === "loading") {
@@ -38,18 +66,7 @@ export function App() {
       <Masthead />
       <main className="page">
         <Waiting />
-        <Routes>
-          <Route path="/" element={<Marketplace />} />
-          <Route path="/auctions/:id" element={<AuctionDetail />} />
-          <Route path="/invoices" element={<Invoices />} />
-          <Route path="/invoices/new" element={<NewInvoice />} />
-          <Route path="/invoices/:id" element={<InvoiceDetail />} />
-          <Route path="/listings/:id" element={<Listing />} />
-          <Route path="/portfolio" element={<Portfolio />} />
-          <Route path="/market" element={<Market />} />
-          <Route path="/operator" element={<Operator />} />
-          <Route path="*" element={<p className="empty">That page does not exist.</p>} />
-        </Routes>
+        <Outlet />
       </main>
     </div>
   );
