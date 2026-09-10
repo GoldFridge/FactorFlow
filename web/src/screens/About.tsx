@@ -5,9 +5,9 @@ import { Link } from "react-router-dom";
  *
  * Everything else in this application is behind a wallet, and it should be: nothing in the
  * venue is public. The consequence is that somebody arriving at the address for the first
- * time — a judge, a partner, an investor being shown it — meets a sign-in screen and no
- * explanation. This page is the explanation, and it is deliberately the only route that
- * renders without a session.
+ * time — a judge, a partner, an investor being shown it — met a sign-in screen and no
+ * explanation. This page is the explanation, it is the root of the site, and it is
+ * deliberately the only route that renders without a session.
  *
  * It says what is real and what is not in the same breath. A prototype that is vague about
  * which of its integrations are live is asking to be believed; one that names the simulated
@@ -48,7 +48,7 @@ function Header() {
         <a href="#inside">Inside</a>
       </nav>
 
-      <Link className="button is-primary" to="/">
+      <Link className="button is-primary" to="/marketplace">
         Enter the venue
       </Link>
     </header>
@@ -73,7 +73,7 @@ function Hero() {
       </p>
 
       <div className="about-cta">
-        <Link className="button is-primary" to="/">
+        <Link className="button is-primary" to="/marketplace">
           Enter the venue
         </Link>
         <a className="button" href="#faq">
@@ -412,7 +412,7 @@ function Footer() {
         FactorFlow · ETHOnline 2026 · a prototype on Hedera testnet, with synthetic invoices
         and no legal assignment of anything.
       </span>
-      <Link className="button" to="/">
+      <Link className="button" to="/marketplace">
         Enter the venue
       </Link>
     </footer>

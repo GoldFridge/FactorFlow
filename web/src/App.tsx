@@ -1,4 +1,4 @@
-import { NavLink, Outlet, Route, Routes } from "react-router-dom";
+import { NavLink, Navigate, Outlet, Route, Routes } from "react-router-dom";
 
 import { About } from "./screens/About";
 import { AuctionDetail } from "./screens/AuctionDetail";
@@ -14,17 +14,21 @@ import { SignIn } from "./screens/SignIn";
 import { useSession } from "./session";
 
 /**
- * Everything in the venue is behind a wallet, which leaves a first-time visitor looking at a
- * sign-in screen with nothing to explain what they have arrived at. /about is the one public
- * route, and it sits outside the layout that holds the gate rather than inside it.
+ * The address opens on the explanation, not on the gate.
+ *
+ * Everything in the venue is behind a wallet, which left a first-time visitor looking at a
+ * sign-in screen with nothing to say what they had arrived at. So the public page is the
+ * root, it sits outside the layout that holds the gate, and the venue starts one door in at
+ * /marketplace. /about is kept as a way in for anyone holding the older link.
  */
 export function App() {
   return (
     <Routes>
-      <Route path="/about" element={<About />} />
+      <Route path="/" element={<About />} />
+      <Route path="/about" element={<Navigate to="/" replace />} />
 
       <Route element={<Venue />}>
-        <Route path="/" element={<Marketplace />} />
+        <Route path="/marketplace" element={<Marketplace />} />
         <Route path="/auctions/:id" element={<AuctionDetail />} />
         <Route path="/invoices" element={<Invoices />} />
         <Route path="/invoices/new" element={<NewInvoice />} />
@@ -105,15 +109,15 @@ function Masthead() {
 
   return (
     <header className="masthead">
-      <span className="brand">
+      <NavLink className="brand" to="/marketplace">
         <span className="mark" aria-hidden="true">
           F
         </span>
         FactorFlow
-      </span>
+      </NavLink>
 
       <nav className="nav">
-        <NavLink to="/" className={({ isActive }) => (isActive ? "is-current" : "")} end>
+        <NavLink to="/marketplace" className={({ isActive }) => (isActive ? "is-current" : "")}>
           Marketplace
         </NavLink>
         <NavLink to="/invoices" className={({ isActive }) => (isActive ? "is-current" : "")}>

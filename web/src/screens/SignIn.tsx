@@ -63,10 +63,10 @@ export function SignIn() {
         ) : null}
       </div>
 
-      {/* Somebody arriving for the first time has no reason to sign in to something nobody
-          has described to them. This is the only way out of the gate that is not a wallet. */}
+      {/* Somebody who arrived at a deep link rather than at the front door can still get to
+          the explanation, which is the only way out of the gate that is not a wallet. */}
       <p className="gate-aside faint small">
-        First time here? <Link to="/about">What FactorFlow is, and what it is not →</Link>
+        First time here? <Link to="/">What FactorFlow is, and what it is not →</Link>
       </p>
     </div>
   );

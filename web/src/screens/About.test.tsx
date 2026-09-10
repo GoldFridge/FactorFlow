@@ -33,17 +33,39 @@ function at(path: string) {
  * already inside.
  */
 describe("the public page", () => {
-  it("renders without a session", async () => {
-    at("/about");
+  it("is what the address opens on, and needs no session", async () => {
+    at("/");
 
     expect(await screen.findByRole("heading", { level: 1 })).toBeInTheDocument();
     expect(screen.queryByText(/Sign in with your wallet/)).not.toBeInTheDocument();
+  });
+
+  // It was published at /about first, and a link that has been sent to somebody outlives
+  // the decision to move it.
+  it("still answers at the address it was published under", async () => {
+    at("/about");
+
+    expect(await screen.findByRole("heading", { level: 1 })).toBeInTheDocument();
   });
 
   it("keeps the venue behind the gate", () => {
     at("/portfolio");
 
     expect(screen.queryByRole("heading", { name: /Invoices, priced without being read/ })).toBeNull();
+  });
+
+  // The way in from the page has to reach the gate rather than the page it is on, which is
+  // what a link back to the root would have done once the root became this.
+  it("offers a door that is not the one the visitor is standing in", () => {
+    render(
+      <MemoryRouter>
+        <About />
+      </MemoryRouter>,
+    );
+
+    for (const link of screen.getAllByRole("link", { name: /Enter the venue/ })) {
+      expect(link).toHaveAttribute("href", "/marketplace");
+    }
   });
 
   /*

@@ -109,9 +109,11 @@ function session() {
   };
 }
 
+// The gate is what a visitor meets inside the venue; the root of the site is the public
+// page, so these tests start where a person who wants in would land.
 function renderApp() {
   return render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={["/marketplace"]}>
       <SessionProvider>
         <App />
       </SessionProvider>
