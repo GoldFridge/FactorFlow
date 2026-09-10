@@ -36,7 +36,7 @@ func TestLoadFromEnvironment(t *testing.T) {
 	t.Setenv("FF_OUTBOX_INTERVAL", "250ms")
 	t.Setenv("FF_GRAPH_API_KEY", "key")
 	t.Setenv("FF_GRAPH_GATEWAY_URL", "https://gateway.example")
-	t.Setenv("FF_CRE_ENDPOINT", "https://cre.example")
+	t.Setenv("FF_CONFIDENTIAL_TOKEN", "a-token-the-vault-releases")
 	t.Setenv("FF_HEDERA_ACCOUNT_ID", "0.0.1234")
 	t.Setenv("FF_HEDERA_PRIVATE_KEY", "302e...")
 	t.Setenv("FF_PAID_RECIPIENT", "0.0.4402")
@@ -51,6 +51,8 @@ func TestLoadFromEnvironment(t *testing.T) {
 	assert.Equal(t, slog.LevelDebug, cfg.LogLevel)
 	assert.Equal(t, 250*time.Millisecond, cfg.OutboxInterval)
 	assert.True(t, cfg.Providers.GraphIsLive())
+	// The token is what makes the confidential path live: the workflow calls in, so there is
+	// no endpoint for this platform to hold.
 	assert.True(t, cfg.Providers.CREIsLive())
 	assert.True(t, cfg.Providers.HederaIsLive())
 	assert.False(t, cfg.DemoAuthEnabled(), "a production deployment never trusts the demo header")

@@ -21,6 +21,7 @@ import (
 	"github.com/GoldFridge/factorflow/internal/app/agents"
 	"github.com/GoldFridge/factorflow/internal/app/assessment"
 	"github.com/GoldFridge/factorflow/internal/app/collections"
+	"github.com/GoldFridge/factorflow/internal/app/confidential"
 	"github.com/GoldFridge/factorflow/internal/app/demo"
 	"github.com/GoldFridge/factorflow/internal/app/documents"
 	"github.com/GoldFridge/factorflow/internal/app/issuance"
@@ -173,6 +174,25 @@ func makeOperator(args []string) error {
 			slog.String("name", org.Name))
 		return nil
 	})
+}
+
+/*
+confidentialWorkflow chooses who opens the document.
+
+With a token configured, a Chainlink CRE workflow collects its own work from this deployment
+and returns a feature vector from inside an attested enclave — so the platform's copy of the
+document stays unreadable to it, which is the claim the whole design rests on.
+
+Without one, the in-process workflow runs, and it is honest about what it is: it does not
+read the document at all. It derives stable pseudo-features from the ciphertext digest so a
+demo can be rehearsed offline, and the assessment says so by its model version.
+*/
+func confidentialWorkflow(cfg config.Config) risk.Workflow {
+	if cfg.Providers.CREIsLive() {
+		slog.Info("assessments are collected by a confidential workflow")
+		return risk.NewPendingWorkflow()
+	}
+	return risk.NewDeterministicWorkflow()
 }
 
 /*
@@ -525,6 +545,17 @@ func wire(cfg config.Config, db *postgres.DB, clk *clock.Clock, ids func() uuid.
 		Market:      marketQuery(cfg),
 	})
 
+	// The endpoints a confidential workflow uses exist only where one is configured: a
+	// deployment without an enclave to serve should not carry a route that hands out
+	// documents, however well guarded.
+	confidentialHandler := confidential.NewHandler(confidential.NewService(confidential.Config{
+		DB:       db,
+		Invoices: invoices,
+		Objects:  objects.NewPostgresStore(),
+		Assessor: assessmentWorker,
+		Now:      now,
+	}), cfg.Providers.CREToken)
+
 	idempotent := idempotency.NewMiddleware(db, now)
 	invoiceHandler := invoice.NewHandler(invoiceService)
 	auctionHandler := auction.NewHandler(auctionService)
@@ -555,6 +586,12 @@ func wire(cfg config.Config, db *postgres.DB, clk *clock.Clock, ids func() uuid.
 			// itself with a signature instead.
 			identityHandler.Routes(r)
 			onboardingHandler.PublicRoutes(r)
+
+			// The workflow authenticates with a token released to it inside an enclave, not
+			// with a session, so its two endpoints sit outside the participant gate.
+			if confidentialHandler.Enabled() {
+				confidentialHandler.Routes(r)
+			}
 
 			r.Group(func(protected chi.Router) {
 				protected.Use(httpserver.RequireActor)
@@ -850,14 +887,6 @@ func marketQuery(cfg config.Config) marketdata.Query {
 		return marketdata.DemoQuery()
 	}
 	return marketdata.GraphQuery(cfg.Providers.GraphNetwork, cfg.Providers.GraphAsset)
-}
-
-// confidentialWorkflow picks the live CRE workflow when one is configured.
-func confidentialWorkflow(cfg config.Config) risk.Workflow {
-	if cfg.Providers.CREIsLive() {
-		slog.Warn("a CRE endpoint is set but the live workflow client is not implemented; using the local workflow")
-	}
-	return risk.NewDeterministicWorkflow()
 }
 
 // resolver picks how a caller is identified.

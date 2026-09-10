@@ -37,14 +37,15 @@ sign in with a wallet → upload a receivable, encrypted in the browser
 | Paid endpoints | **Live** x402 on Hedera testnet, verified against the public mirror |
 | Tokenization | **Live** minting on Hedera testnet through the HTS adapter |
 | Documents | AES-GCM in the browser; the platform stores bytes it cannot read |
+| Confidential run | Chainlink CRE workflow, Go handler in an attested enclave (simulated) |
 | Identity | Wallet sign-in over EIP-191, multi-wallet choice over EIP-6963 |
 | Disclosure | An offered receivable is readable by the venue; an unlisted one is not |
 | Persistence | Schema, repositories, transactional outbox, idempotent writes |
 | HTTP API | 41 endpoints, RFC 9457 problems, trace ids, security headers |
 | Web | React + TypeScript, exact decimals rendered without floats |
 
-Still behind an in-process port rather than a live service: the confidential workflow
-(Chainlink CRE).
+Every integration is live except the confidential workflow, which runs in CRE's simulator
+because this repository has not been granted deployment access.
 
 ## Architecture
 
@@ -297,6 +298,61 @@ no party. The privacy rule is not enforced by asking politely — the content is
 Set `FF_LLM_API_KEY` (and optionally `FF_LLM_BASE_URL`, `FF_LLM_MODEL`, which default to
 DeepSeek) to turn it on. Without a key, every assessment is explained from its own
 coefficients, and the screen says which of the two it is showing.
+
+## The one place an invoice is readable
+
+The document is encrypted in the seller's browser and stays that way everywhere the platform
+can reach. It is opened in exactly one place: a Chainlink CRE workflow running inside an
+attested enclave, in `cre-workflows/invoice-risk-go`.
+
+The platform's half is a counter rather than a function call, because a workflow on somebody
+else's infrastructure cannot be called and waited on. `GET /api/v1/confidential/work` hands
+over the oldest waiting assessment — the ciphertext, its digest, and the nonce the run is
+bound to — and `POST /api/v1/confidential/results` takes the answer back. There is no key in
+either direction. The key travels from the browser that made it to the enclave that reads
+with it, released by the Vault DON, and no request to this platform can produce it.
+
+Inside the enclave the workflow checks the digest before it uses the key, decrypts, checks
+the document's own arithmetic against its line items, and derives six features in [0,1] plus
+a confidence. What comes out is that vector, two verdicts and a commitment — no text, no
+line items, no debtor, no amounts. A feature vector cannot be turned back into an invoice,
+which is why the platform can hold the result in the clear.
+
+The nonce is derived from the invoice and the ciphertext digest rather than generated, so
+the enclave and the platform arrive at the same value without exchanging it, and a verifier
+holding the stored assessment can recompute the commitment without asking anybody for state.
+
+What comes back is treated as untrusted input: it is validated against the request it claims
+to answer — invoice, schema, feature ranges, commitment shape — before a number of it
+reaches a price.
+
+Without `FF_CONFIDENTIAL_TOKEN` the endpoints do not exist at all and the in-process
+workflow runs instead. That one is honest about what it is: it does not read the document,
+it derives stable pseudo-features from the ciphertext digest so the demo can be rehearsed
+offline, and the assessment says so by its model version.
+
+**With the token set, an assessment waits for the enclave**, so unset it before rehearsing
+the offline demo — otherwise every upload sits in `EXTRACTING` waiting for a workflow that
+is not running.
+
+### Running it
+
+```
+cd cre-workflows/invoice-risk-go
+export FF_CONFIDENTIAL_TOKEN=...            # the same value the platform has
+export FF_CONFIDENTIAL_DOCUMENT_KEY=...     # the key the document was sealed with, base64
+cre workflow simulate ./invoice-risk --target staging-settings --non-interactive --trigger-index 0
+```
+
+The simulator compiles the workflow to WASM, reports the binary hash, and runs the handler
+under a TEE constraint of AWS Nitro in us-west-2. A successful run ends with the invoice it
+assessed and the commitment it produced, and the receivable is `ASSESSED` on the platform a
+moment later.
+
+It is a simulation and says so: `cre account access` requests the deployment this repository
+has not been granted. What a deployment would change is where the handler runs and who
+attests it — not the code, which is the same file, and not the boundary, which is drawn by
+what the platform is given rather than by what it promises.
 
 ## Selling an answer to a machine
 

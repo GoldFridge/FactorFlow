@@ -1,0 +1,20 @@
+# What this workflow is called and what it is built from.
+#
+# The confidential assessment of a receivable: it collects work from the platform, opens the
+# document inside an attested enclave, and returns a feature vector that cannot be turned
+# back into an invoice.
+staging-settings:
+  user-workflow:
+    workflow-name: "factorflow-invoice-risk-staging"
+  workflow-artifacts:
+    workflow-path: "."
+    config-path: "./config.staging.json"
+    secrets-path: "../secrets.yaml"
+
+production-settings:
+  user-workflow:
+    workflow-name: "factorflow-invoice-risk"
+  workflow-artifacts:
+    workflow-path: "."
+    config-path: "./config.production.json"
+    secrets-path: "../secrets.yaml"

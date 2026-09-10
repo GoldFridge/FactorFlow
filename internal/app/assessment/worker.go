@@ -10,6 +10,7 @@ package assessment
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -143,6 +144,12 @@ func (w *AssessmentWorker) Handle(ctx context.Context, event outbox.Event) error
 
 	request, result, err := w.runWorkflow(ctx, command)
 	if err != nil {
+		if errors.Is(err, risk.ErrCollectedElsewhere) {
+			// The confidential workflow takes its own work. The invoice stays where it is
+			// and the answer arrives through Complete; failing it here would mark an
+			// assessment failed for the crime of not being synchronous.
+			return nil
+		}
 		return w.recordFailure(ctx, command.InvoiceID, err)
 	}
 
@@ -191,17 +198,23 @@ func (w *AssessmentWorker) narrate(ctx context.Context, assessment *risk.Assessm
 // runWorkflow calls the confidential workflow and refuses a result it cannot trust.
 func (w *AssessmentWorker) runWorkflow(ctx context.Context, command assessCommand) (risk.WorkflowRequest, risk.WorkflowResult, error) {
 	request := risk.WorkflowRequest{
-		InvoiceID:     command.InvoiceID,
-		ObjectKey:     command.ObjectKey,
-		CipherHash:    command.CipherHash,
-		KeyRef:        command.KeyRef,
-		MIME:          command.MIME,
-		Nonce:         w.ids().String(),
+		InvoiceID:  command.InvoiceID,
+		ObjectKey:  command.ObjectKey,
+		CipherHash: command.CipherHash,
+		KeyRef:     command.KeyRef,
+		MIME:       command.MIME,
+		// Derived rather than generated: a workflow that collects its own work has to
+		// arrive at the same nonce without being told it, and a verifier has to be able to
+		// recompute the commitment later.
+		Nonce:         risk.DeriveNonce(command.InvoiceID, command.CipherHash),
 		SchemaVersion: risk.FeatureSchemaV1,
 	}
 
 	result, err := w.workflow.Assess(ctx, request)
 	if err != nil {
+		if errors.Is(err, risk.ErrCollectedElsewhere) {
+			return request, risk.WorkflowResult{}, err
+		}
 		return request, risk.WorkflowResult{}, apperr.Unavailablef("confidential workflow: %v", err)
 	}
 	if err := result.Validate(request); err != nil {
@@ -292,6 +305,62 @@ func (w *AssessmentWorker) commit(ctx context.Context, inv *invoice.Invoice, sna
 				With("requires_manual_review", assessment.RequiresManualReview).
 				With("status", inv.Status.String()))
 	})
+}
+
+/*
+Complete finishes an assessment whose confidential half ran somewhere else.
+
+It is the other end of ErrCollectedElsewhere: the workflow collected the work, opened the
+document inside an enclave and returned a feature vector, and everything after that — the
+market snapshot, the score, the price, the audit line — is the same code the in-process path
+runs. What arrives from outside is treated as untrusted input and validated against the
+request it claims to answer before any of it is scored.
+*/
+func (w *AssessmentWorker) Complete(ctx context.Context, invoiceID uuid.UUID, result risk.WorkflowResult) error {
+	inv, err := w.invoices.Get(ctx, w.db.Querier(), invoiceID)
+	if err != nil {
+		return err
+	}
+	if inv.Status != invoice.StatusExtracting {
+		// Not waiting for an answer. A workflow that delivers twice, or delivers late for
+		// an invoice somebody already failed by hand, must not reopen it.
+		return apperr.Conflictf("invoice %s is %s and is not waiting for an assessment",
+			inv.ID, inv.Status)
+	}
+
+	document, err := w.invoices.GetDocument(ctx, w.db.Querier(), inv.ID)
+	if err != nil {
+		return err
+	}
+
+	request := risk.WorkflowRequest{
+		InvoiceID:     inv.ID,
+		ObjectKey:     document.ObjectKey,
+		CipherHash:    document.CipherHash,
+		KeyRef:        document.KeyRef,
+		MIME:          document.MIME,
+		Nonce:         risk.DeriveNonce(inv.ID, document.CipherHash),
+		SchemaVersion: risk.FeatureSchemaV1,
+	}
+	if err := result.Validate(request); err != nil {
+		return err
+	}
+
+	snapshot, err := w.snapshot(ctx)
+	if err != nil {
+		return w.recordFailure(ctx, inv.ID, err)
+	}
+
+	assessment, err := w.score(inv, snapshot, request, result)
+	if err != nil {
+		return w.recordFailure(ctx, inv.ID, err)
+	}
+	if err := w.commit(ctx, inv, snapshot, assessment); err != nil {
+		return err
+	}
+
+	w.narrate(ctx, assessment)
+	return nil
 }
 
 // recordFailure moves the invoice to FAILED and returns the cause.

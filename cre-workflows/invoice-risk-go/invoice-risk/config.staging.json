@@ -1,0 +1,7 @@
+{
+  "schedule": "0 */1 * * * *",
+  "platformUrl": "http://localhost:8080",
+  "secretId": "PLATFORM_TOKEN",
+  "keySecretId": "DOCUMENT_KEY",
+  "schemaVersion": "features-v1"
+}

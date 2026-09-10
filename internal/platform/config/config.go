@@ -96,7 +96,12 @@ type Providers struct {
 	HederaNetwork   string
 	GraphAPIKey     string
 	GraphGatewayURL string
-	CREEndpoint     string
+	// CREToken authorizes a confidential workflow to collect work and return results.
+	//
+	// It is a token rather than an endpoint because the traffic goes the other way: the
+	// workflow runs on Chainlink's infrastructure, wakes on its own schedule and calls in.
+	// There is nothing here for this platform to dial.
+	CREToken string
 	// LLM is the model that puts a published score into words. It never decides anything:
 	// the assessment exists before it is asked, and what it writes is checked against the
 	// numbers that assessment published.
@@ -115,8 +120,8 @@ func (p Providers) GraphIsLive() bool { return p.GraphAPIKey != "" && p.GraphGat
 // LLMIsLive reports whether a model is configured to narrate assessments.
 func (p Providers) LLMIsLive() bool { return p.LLMAPIKey != "" && p.LLMModel != "" }
 
-// CREIsLive reports whether a live confidential workflow is configured.
-func (p Providers) CREIsLive() bool { return p.CREEndpoint != "" }
+// CREIsLive reports whether a confidential workflow collects work from this deployment.
+func (p Providers) CREIsLive() bool { return p.CREToken != "" }
 
 // HederaIsLive reports whether Hedera credentials are configured.
 func (p Providers) HederaIsLive() bool { return p.HederaAccountID != "" && p.HederaPrivateKey != "" }
@@ -149,7 +154,7 @@ func Load() (Config, error) {
 			GraphGatewayURL:  os.Getenv("FF_GRAPH_GATEWAY_URL"),
 			GraphNetwork:     envOr("FF_GRAPH_NETWORK", "ethereum"),
 			GraphAsset:       envOr("FF_GRAPH_ASSET", "USDC"),
-			CREEndpoint:      os.Getenv("FF_CRE_ENDPOINT"),
+			CREToken:         os.Getenv("FF_CONFIDENTIAL_TOKEN"),
 			LLMAPIKey:        os.Getenv("FF_LLM_API_KEY"),
 			LLMBaseURL:       envOr("FF_LLM_BASE_URL", "https://api.deepseek.com"),
 			LLMModel:         envOr("FF_LLM_MODEL", "deepseek-chat"),

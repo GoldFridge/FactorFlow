@@ -330,10 +330,42 @@ func TestWorkerIsReproducible(t *testing.T) {
 	assert.Equal(t, a.ReservePrice.String(), b.ReservePrice.String())
 	assert.Equal(t, a.MarketSnapshotHash, b.MarketSnapshotHash)
 
-	// The commitment is deliberately not reproducible across runs: it binds one workflow
-	// run through its nonce, which is what makes a replayed result detectable.
-	assert.NotEqual(t, a.ConfidentialCommitment, b.ConfidentialCommitment)
-	assert.NotEqual(t, a.ConfidentialNonce, b.ConfidentialNonce)
+	/*
+	 * The commitment is reproducible too, and that is a deliberate change from a random
+	 * nonce.
+	 *
+	 * The nonce is derived from the invoice and the ciphertext digest, because a
+	 * confidential workflow that collects its own work has to arrive at the same value
+	 * without being handed it — and because a verifier holding the stored assessment can
+	 * then recompute the whole chain without asking this platform for state it would have
+	 * to be trusted about.
+	 *
+	 * What that gives up is replay detection by nonce, and it is not missed: a replayed
+	 * result carries the same features for the same document, so accepting it changes
+	 * nothing, and an invoice only accepts an assessment while it is waiting for one. What
+	 * it keeps is the binding that matters — a different document is a different digest, so
+	 * a result computed over other bytes cannot be presented as this one.
+	 */
+	assert.Equal(t, a.ConfidentialNonce, b.ConfidentialNonce)
+	assert.Equal(t, a.ConfidentialCommitment, b.ConfidentialCommitment)
+}
+
+// TestAnotherDocumentIsAnotherRun: the binding that survives a derived nonce is the one
+// worth having — the digest of the bytes that were actually read.
+func TestAnotherDocumentIsAnotherRun(t *testing.T) {
+	t.Parallel()
+
+	invoiceID := uuid.MustParse("33333333-3333-4333-8333-333333333333")
+
+	first := risk.DeriveNonce(invoiceID,
+		"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08")
+	second := risk.DeriveNonce(invoiceID,
+		"5eb7d6de698f1390347fa359417df39d30695bec25359b1510e05772414bac0f")
+
+	assert.NotEqual(t, first, second, "other bytes, other run")
+	assert.Equal(t, first, risk.DeriveNonce(invoiceID,
+		"9F86D081884C7D659A2FEAA0C55AD015A3BF4F1B2B0B822CD15D6C15B0F00A08"),
+		"and the same bytes, however the digest is spelled")
 }
 
 // TestStoredCommitmentIsCheckable is why the nonce is stored: a commitment nobody can

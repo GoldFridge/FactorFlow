@@ -1,0 +1,12 @@
+# This workflow reads no chain and writes none: what it produces is a feature vector, and
+# the platform is what stores it. The RPC below is here because the CLI expects a target to
+# be configured, not because anything is read from it.
+staging-settings:
+  rpcs:
+    - chain-name: ethereum-testnet-sepolia
+      url: https://ethereum-sepolia-rpc.publicnode.com
+
+production-settings:
+  rpcs:
+    - chain-name: ethereum-testnet-sepolia
+      url: https://ethereum-sepolia-rpc.publicnode.com
