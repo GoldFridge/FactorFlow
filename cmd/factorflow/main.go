@@ -74,6 +74,8 @@ func dispatch(args []string) error {
 			return makeOperator(args[1:])
 		case "chain-accounts":
 			return openChainAccounts()
+		case "agent":
+			return runAgent(args[1:])
 		}
 	}
 	return run()
@@ -480,6 +482,7 @@ func wire(cfg config.Config, db *postgres.DB, clk *clock.Clock, ids func() uuid.
 	agentService := agents.NewService(agents.Config{
 		DB:        db,
 		Snapshots: snapshots,
+		Markets:   market,
 		Auctions:  auctions,
 		Model:     risk.ModelV1(),
 		Market:    marketQuery(cfg),
@@ -488,7 +491,7 @@ func wire(cfg config.Config, db *postgres.DB, clk *clock.Clock, ids func() uuid.
 	paidService := payments.NewService(payments.Config{
 		DB:          db,
 		Repo:        payments.NewPostgresRepository(),
-		Facilitator: paymentFacilitator(cfg, now),
+		Facilitator: paymentFacilitator(cfg, chain, now),
 		Network:     cfg.Paid.Network,
 		Recipient:   cfg.Paid.Recipient,
 		Asset:       cfg.Paid.Asset,
@@ -640,12 +643,50 @@ func paidPrice(cfg config.Config) money.Amount {
 	return price
 }
 
-// paymentFacilitator picks the live x402 verifier when one is configured.
-func paymentFacilitator(cfg config.Config, now func() time.Time) payments.Facilitator {
-	if cfg.Paid.IsLive() {
-		slog.Warn("an x402 facilitator is configured but the live client is not implemented; using the local one")
+/*
+paymentFacilitator picks who confirms that a machine customer paid.
+
+With a chain configured, that is the network itself, read through a public mirror. There is
+no third-party facilitator here and none is needed: verifying a Hedera payment takes no
+credentials, and outsourcing it would only add somebody else to trust.
+*/
+func paymentFacilitator(cfg config.Config, chain *hedera.Client, now func() time.Time) payments.Facilitator {
+	if chain == nil || !strings.HasPrefix(cfg.Paid.Recipient, "0.0.") {
+		return payments.NewLocalFacilitator(cfg.Paid.Recipient, now)
 	}
-	return payments.NewLocalFacilitator(cfg.Paid.Recipient, now)
+
+	slog.Info("charging machine customers on hedera",
+		slog.String("network", chain.Network()),
+		slog.String("recipient", cfg.Paid.Recipient))
+
+	return payments.NewChainFacilitator(
+		hederaLedger{mirror: hedera.NewMirror(cfg.Providers.HederaNetwork, ""), network: chain.Network()},
+		cfg.Paid.Recipient, now)
+}
+
+// hederaLedger adapts the mirror to the one question payments asks of a network.
+type hederaLedger struct {
+	mirror  *hedera.Mirror
+	network string
+}
+
+func (h hederaLedger) Network() string { return h.network }
+
+func (h hederaLedger) Payment(ctx context.Context, transactionID string) (payments.LedgerPayment, error) {
+	record, err := h.mirror.Transaction(ctx, transactionID)
+	if err != nil {
+		return payments.LedgerPayment{}, err
+	}
+	return payments.LedgerPayment{
+		TransactionID: record.TransactionID,
+		Found:         record.Found,
+		Succeeded:     record.Succeeded(),
+		Status:        record.Status,
+		ConfirmedAt:   record.ConsensusAt,
+		Memo:          record.Memo,
+		Paid:          record.Paid,
+		PaidBy:        record.PaidBy,
+	}, nil
 }
 
 // transferExecutor picks the live chain when Hedera credentials are configured, and the

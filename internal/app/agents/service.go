@@ -31,6 +31,9 @@ type TxRunner interface {
 type Service struct {
 	db        TxRunner
 	snapshots marketdata.Repository
+	// markets takes a new observation when the stored one has gone stale. It is optional:
+	// without it this service can only sell prices somebody else's work kept fresh.
+	markets *marketdata.Service
 	auctions  auction.Repository
 	model     risk.Model
 	market    marketdata.Query
@@ -41,6 +44,7 @@ type Service struct {
 type Config struct {
 	DB        TxRunner
 	Snapshots marketdata.Repository
+	Markets   *marketdata.Service
 	Auctions  auction.Repository
 	Model     risk.Model
 	Market    marketdata.Query
@@ -58,11 +62,51 @@ func NewService(cfg Config) *Service {
 	return &Service{
 		db:        cfg.DB,
 		snapshots: cfg.Snapshots,
+		markets:   cfg.Markets,
 		auctions:  cfg.Auctions,
 		model:     cfg.Model,
 		market:    cfg.Market,
 		now:       cfg.Now,
 	}
+}
+
+/*
+snapshot is the market this quote is priced against.
+
+The stored one is used while it is fresh, and a new observation is taken when it is not.
+That matters more here than anywhere else in the system: a machine customer pays before it
+finds out whether an answer exists, so refusing it because nobody happened to have priced a
+receivable in the last quarter of an hour would be charging for the platform's idleness.
+
+Pricing still fails closed. If the market cannot be observed at all, no quote is produced —
+a stale benchmark is wrong in a way the buyer cannot see, and this endpoint sells exactly
+the thing that would be wrong.
+*/
+func (s *Service) snapshot(ctx context.Context) (*marketdata.Snapshot, error) {
+	stored, err := s.snapshots.Latest(ctx, s.db.Querier(), s.market.Network, s.market.Asset)
+	if err == nil && stored.IsFresh(s.now()) {
+		return stored, nil
+	}
+	if err != nil && !apperr.IsNotFound(err) {
+		return nil, err
+	}
+	if s.markets == nil {
+		// Nothing can be observed, so the freshness rule is what stands: the stored snapshot
+		// is either usable or this endpoint has nothing honest to sell.
+		if stored == nil {
+			return nil, apperr.Unavailablef("no market snapshot has been taken yet")
+		}
+		return stored, stored.EnsureFresh(s.now())
+	}
+
+	taken, err := s.markets.Snapshot(ctx, s.market)
+	if err != nil {
+		return nil, err
+	}
+	if err := taken.EnsureFresh(s.now()); err != nil {
+		return nil, err
+	}
+	return taken, nil
 }
 
 // quoteRequest is what an agent asks for a price on.
@@ -150,13 +194,8 @@ func (s *Service) RiskQuote(ctx context.Context, body []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	snapshot, err := s.snapshots.Latest(ctx, s.db.Querier(), s.market.Network, s.market.Asset)
+	snapshot, err := s.snapshot(ctx)
 	if err != nil {
-		return nil, err
-	}
-	// A price computed from stale market data would be wrong in a way the buyer cannot
-	// see, so pricing fails closed where the reporting endpoints only report.
-	if err := snapshot.EnsureFresh(s.now()); err != nil {
 		return nil, err
 	}
 

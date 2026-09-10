@@ -333,3 +333,49 @@ func (c *Client) CreateAccount(ctx context.Context, initialBalance hiero.Hbar) (
 func (c *Client) AccountURL(accountID string) string {
 	return fmt.Sprintf("https://hashscan.io/%s/account/%s", c.network, accountID)
 }
+
+/*
+Pay sends the network's own unit to an account, with a memo.
+
+The memo is the point. A bare transfer proves that money moved and nothing about what it was
+for; a memo carrying the nonce of a quote is what lets a recipient decide that this payment
+bought this answer, and not a different one, and not the same one twice. It is public — a
+memo is on the ledger for anyone to read — so it holds an identifier and never a secret.
+*/
+func (c *Client) Pay(ctx context.Context, to string, tinybars int64, memo string) (Receipt, error) {
+	if err := ctx.Err(); err != nil {
+		return Receipt{}, err
+	}
+	if tinybars <= 0 {
+		return Receipt{}, apperr.Invalid("amount", "must be greater than zero")
+	}
+
+	recipient, err := accountFrom(to)
+	if err != nil {
+		return Receipt{}, err
+	}
+
+	response, err := hiero.NewTransferTransaction().
+		AddHbarTransfer(c.operator, hiero.HbarFromTinybar(-tinybars)).
+		AddHbarTransfer(recipient, hiero.HbarFromTinybar(tinybars)).
+		SetTransactionMemo(clamp(memo, maxMemoLen)).
+		Execute(c.inner)
+	if err != nil {
+		return Receipt{}, fmt.Errorf("submitting the payment: %w", err)
+	}
+
+	receipt, err := response.GetReceiptQueryWithClient(c.inner).Execute(c.inner)
+	if err != nil {
+		return Receipt{TransactionID: response.TransactionID.String()},
+			fmt.Errorf("reading the receipt for %s: %w", response.TransactionID, err)
+	}
+
+	return Receipt{
+		TransactionID: response.TransactionID.String(),
+		ExplorerURL:   c.TransactionURL(response.TransactionID.String()),
+		Status:        receipt.Status.String(),
+	}, nil
+}
+
+// maxMemoLen is the network's limit on a transaction memo.
+const maxMemoLen = 100

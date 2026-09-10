@@ -34,6 +34,7 @@ sign in with a wallet → upload a receivable, encrypted in the browser
 | Independent verifier | Recomputes every constraint; 20 tampering cases covered |
 | Settlement | **Live** transfers on Hedera testnet, confirmed against the public mirror |
 | Maturity | Repayment recorded by an operator, divided exactly among the holders |
+| Paid endpoints | **Live** x402 on Hedera testnet, verified against the public mirror |
 | Tokenization | **Live** minting on Hedera testnet through the HTS adapter |
 | Documents | AES-GCM in the browser; the platform stores bytes it cannot read |
 | Identity | Wallet sign-in over EIP-191, multi-wallet choice over EIP-6963 |
@@ -42,8 +43,8 @@ sign in with a wallet → upload a receivable, encrypted in the browser
 | HTTP API | 41 endpoints, RFC 9457 problems, trace ids, security headers |
 | Web | React + TypeScript, exact decimals rendered without floats |
 
-Still behind in-process ports rather than live services: the confidential workflow (Chainlink
-CRE) and the x402 paid endpoints.
+Still behind an in-process port rather than a live service: the confidential workflow
+(Chainlink CRE).
 
 ## Architecture
 
@@ -296,6 +297,33 @@ no party. The privacy rule is not enforced by asking politely — the content is
 Set `FF_LLM_API_KEY` (and optionally `FF_LLM_BASE_URL`, `FF_LLM_MODEL`, which default to
 DeepSeek) to turn it on. Without a key, every assessment is explained from its own
 coefficients, and the screen says which of the two it is showing.
+
+## Selling an answer to a machine
+
+The two paid endpoints are the platform's other customer: a program that wants a price for a
+receivable this platform has never seen, and will not open an account to get one. It asks,
+is refused with HTTP 402 and a price, pays, and asks again.
+
+The payment is real. `factorflow agent risk-quote 15000.00 60` is that machine customer: it
+holds its own Hedera account, reads the 402, transfers the quoted HBAR with the quote's
+nonce in the transaction memo, and comes back with the transaction id.
+
+Verification needs no third party. The platform reads the public mirror and checks five
+things, each of which is a way a customer could otherwise be served an answer it did not buy:
+the network says the transaction succeeded; it credited this platform's account; it credited
+at least the quoted price; it was submitted by the payer the proof names; and its memo
+carries the nonce this quote was issued under — which is what stops a payment for one
+question buying the answer to another, and what stops the same payment buying two.
+
+Two failures are deliberately not refusals. A mirror that has not indexed the payment yet
+answers 503 and the quote stays payable, because a customer whose money is already on the
+network must not lose it to a few seconds of lag. And a conflict — somebody else's proof
+against a quote in flight — leaves the quote alone, because otherwise anybody could burn a
+paid quote by sending one request. A customer that paid and did not get an answer may ask
+again with the same proof and is owed the work.
+
+Set `FF_PAID_CURRENCY=HBAR` and `FF_PAID_RECIPIENT` to a Hedera account to charge on the
+network; without them the in-process facilitator runs the same exchange offline.
 
 ## Double financing
 

@@ -152,6 +152,9 @@ type fixture struct {
 	// calls counts how often the work actually ran, which is how a test proves a replay
 	// returned the stored answer instead of recomputing it.
 	calls int
+	// workErr makes the work fail, standing in for a dependency that was down when a paid
+	// request reached it.
+	workErr error
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -184,6 +187,9 @@ func newFixture(t *testing.T) *fixture {
 
 // work echoes the question back with an answer, and counts how often it ran.
 func (f *fixture) work(_ context.Context, body []byte) ([]byte, error) {
+	if f.workErr != nil {
+		return nil, f.workErr
+	}
 	f.calls++
 
 	var question map[string]any
@@ -506,3 +512,76 @@ func TestExpiredQuotesArePurgedButPaidOnesAreKept(t *testing.T) {
 
 // base64Decode reads the receipt header the handler wrote.
 func base64Decode(s string) ([]byte, error) { return base64.StdEncoding.DecodeString(s) }
+
+/*
+ * TestAnUnreachableVerifierDoesNotSpendTheQuote is a failure a machine customer cannot
+ * recover from if it is got wrong.
+ *
+ * The payment is real and already on the network; what failed is the platform's ability to
+ * see it, and a mirror lagging consensus by seconds is the ordinary case rather than an
+ * exotic one. Rejecting the quote there would leave the customer having paid for an answer
+ * it can never collect, because the quote it paid against is spent and a new one carries a
+ * new nonce. So the quote stays payable and the client is told to come back.
+ */
+func TestAnUnreachableVerifierDoesNotSpendTheQuote(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+	body := `{"face":"10000.00","days_to_due":60}`
+
+	quoted := f.post(t, testEndpoint, body, "", "")
+	require.Equal(t, http.StatusPaymentRequired, quoted.Code)
+	header := f.pay(t, quoted)
+
+	f.facilitator.FailVerification(apperr.Unavailablef("the mirror has not indexed it yet"))
+
+	waiting := f.post(t, testEndpoint, body, header, "")
+	require.Equal(t, http.StatusServiceUnavailable, waiting.Code, waiting.Body.String())
+	assert.Zero(t, f.calls, "and nothing was computed for a payment nobody could confirm")
+
+	// When the network catches up, the same payment buys the answer it was made for.
+	f.facilitator.FailVerification(nil)
+
+	answered := f.post(t, testEndpoint, body, header, "")
+	require.Equal(t, http.StatusOK, answered.Code, answered.Body.String())
+	assert.Equal(t, 1, f.calls)
+}
+
+/*
+ * TestAPaidCustomerMayAskAgainWhenTheWorkFailed.
+ *
+ * The payment is on the network and the answer is not: something the platform depends on
+ * was down when the work ran. The customer is owed the work, not a refusal — and a state
+ * machine that says "this quote is VERIFIED and cannot be paid again" to the very person
+ * who paid it has turned its own bookkeeping into the customer's problem.
+ *
+ * Somebody else's payment against the same quote is still refused, which is the distinction
+ * that makes this safe rather than merely forgiving.
+ */
+func TestAPaidCustomerMayAskAgainWhenTheWorkFailed(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+	body := `{"face":"10000.00","days_to_due":60}`
+
+	quoted := f.post(t, testEndpoint, body, "", "")
+	require.Equal(t, http.StatusPaymentRequired, quoted.Code)
+	header := f.pay(t, quoted)
+
+	f.workErr = apperr.Unavailablef("the market could not be observed")
+	failed := f.post(t, testEndpoint, body, header, "")
+	require.Equal(t, http.StatusServiceUnavailable, failed.Code, failed.Body.String())
+
+	// Another payer's proof for the same quote is not a retry.
+	stranger := f.facilitator.Pay("0.0.999999", payments.Requirement{
+		Nonce: requirementOf(t, quoted)["nonce"].(string),
+		Price: money.MustParse("0.25", money.USD),
+	})
+	intruder := f.post(t, testEndpoint, body, payments.EncodePayment(stranger, payments.LocalNetwork), "")
+	assert.Equal(t, http.StatusConflict, intruder.Code)
+
+	// The customer that did pay asks again, and is answered.
+	f.workErr = nil
+	answered := f.post(t, testEndpoint, body, header, "")
+	require.Equal(t, http.StatusOK, answered.Code, answered.Body.String())
+}

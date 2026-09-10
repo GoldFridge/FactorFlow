@@ -113,6 +113,19 @@ type Requirement struct {
 	ExpiresAt time.Time
 }
 
+/*
+PaidBy reports whether this request is already being fulfilled against exactly this payment.
+
+It is what separates a customer asking again for an answer it paid for from somebody else
+turning up with a different payment for a quote in flight. The first is owed the work; the
+second is refused.
+*/
+func (r *Request) PaidBy(payment Payment) bool {
+	return r.PaymentTx != "" &&
+		r.PaymentTx == strings.TrimSpace(payment.TxID) &&
+		r.Payer == strings.ToLower(strings.TrimSpace(payment.Payer))
+}
+
 // IsExpired reports whether the quoted price has gone stale.
 func (r Requirement) IsExpired(now time.Time) bool { return now.After(r.ExpiresAt) }
 

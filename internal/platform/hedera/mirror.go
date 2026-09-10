@@ -2,6 +2,7 @@ package hedera
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -66,6 +67,11 @@ type MirrorRecord struct {
 	// Transfers are the token movements the transaction actually performed, which is what
 	// makes this a check rather than a restatement of what we asked for.
 	Transfers []MirrorTransfer
+	// Credits are the same for the network's own unit, in tinybars.
+	Credits []MirrorCredit
+	// Memo is the note the sender attached. A payment for one question must not buy the
+	// answer to another, and on a plain transfer the memo is where that binding lives.
+	Memo string
 }
 
 // MirrorTransfer is one account's change in one token.
@@ -73,6 +79,40 @@ type MirrorTransfer struct {
 	TokenID string
 	Account string
 	Amount  int64
+}
+
+// MirrorCredit is one account's change in the network's own unit, in tinybars.
+type MirrorCredit struct {
+	Account string
+	Amount  int64
+}
+
+/*
+Paid reports whether this transaction credited an account with at least an amount of the
+network's own unit.
+
+At least, rather than exactly: a payer that rounded up has paid, and refusing their answer
+over a surplus they chose to give would be pedantry with somebody else's money. Paying less
+than the quoted price is a different matter and fails.
+*/
+func (r MirrorRecord) Paid(account string, tinybars int64) bool {
+	for _, credit := range r.Credits {
+		if credit.Account == account && credit.Amount >= tinybars {
+			return true
+		}
+	}
+	return false
+}
+
+// PaidBy reports whether an account was debited by this transaction, which is how the
+// platform checks that the payer is who the proof claims rather than who it names.
+func (r MirrorRecord) PaidBy(account string) bool {
+	for _, credit := range r.Credits {
+		if credit.Account == account && credit.Amount < 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // Succeeded reports the network's own verdict.
@@ -92,9 +132,14 @@ func (r MirrorRecord) Moved(tokenID, account string, amount int64) bool {
 
 type mirrorResponse struct {
 	Transactions []struct {
-		TransactionID  string `json:"transaction_id"`
-		Result         string `json:"result"`
-		ConsensusAt    string `json:"consensus_timestamp"`
+		TransactionID string `json:"transaction_id"`
+		Result        string `json:"result"`
+		ConsensusAt   string `json:"consensus_timestamp"`
+		MemoBase64    string `json:"memo_base64"`
+		Transfers     []struct {
+			Account string `json:"account"`
+			Amount  int64  `json:"amount"`
+		} `json:"transfers"`
 		TokenTransfers []struct {
 			TokenID string `json:"token_id"`
 			Account string `json:"account"`
@@ -162,6 +207,15 @@ func (m *Mirror) Transaction(ctx context.Context, transactionID string) (MirrorR
 			Account: transfer.Account,
 			Amount:  transfer.Amount,
 		})
+	}
+	for _, credit := range first.Transfers {
+		record.Credits = append(record.Credits, MirrorCredit{
+			Account: credit.Account,
+			Amount:  credit.Amount,
+		})
+	}
+	if memo, err := base64.StdEncoding.DecodeString(first.MemoBase64); err == nil {
+		record.Memo = string(memo)
 	}
 	return record, nil
 }

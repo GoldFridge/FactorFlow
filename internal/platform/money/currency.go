@@ -5,10 +5,11 @@ import (
 	"strings"
 )
 
-// Currency is an ISO 4217 alphabetic currency code.
+// Currency is a unit of account: an ISO 4217 code, or a network's own unit.
 //
-// The MVP registry is deliberately small: an unknown code is rejected at the boundary
-// instead of being stored with a guessed exponent.
+// The registry is deliberately small: an unknown code is rejected at the boundary instead
+// of being stored with a guessed exponent. Getting an exponent wrong is not a rounding
+// error, it is a factor of a hundred or of a hundred million.
 type Currency string
 
 // Currencies supported by the MVP.
@@ -17,14 +18,20 @@ const (
 	EUR Currency = "EUR"
 	GBP Currency = "GBP"
 	JPY Currency = "JPY"
+	// HBAR is Hedera's own unit. It is here because a machine paying for an answer pays in
+	// what the network moves, and quoting that price in dollars would mean inventing an
+	// exchange rate somewhere — which is the kind of number this package exists to refuse.
+	// Its minor unit is the tinybar, and eight digits is exactly what the network uses.
+	HBAR Currency = "HBAR"
 )
 
 // currencyExponents maps a currency to the number of decimal digits in its minor unit.
 var currencyExponents = map[Currency]int32{
-	USD: 2,
-	EUR: 2,
-	GBP: 2,
-	JPY: 0,
+	USD:  2,
+	EUR:  2,
+	GBP:  2,
+	JPY:  0,
+	HBAR: 8,
 }
 
 // ParseCurrency validates and normalizes a currency code.

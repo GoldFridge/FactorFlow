@@ -141,6 +141,15 @@ func TestAStaleMarketRefusesToQuote(t *testing.T) {
 	assert.Contains(t, err.Error(), "DATA_STALE")
 }
 
+/*
+ * TestQuoteWithoutAnyMarketData: a platform that cannot observe the market has nothing
+ * honest to sell, and says so as a dependency being unavailable rather than as something
+ * not being found.
+ *
+ * The distinction earns its keep on the paid path. A machine customer that meets this after
+ * paying keeps its quote and may ask again when the market comes back; if this were a
+ * refusal, it would have paid for an answer it could never collect.
+ */
 func TestQuoteWithoutAnyMarketData(t *testing.T) {
 	t.Parallel()
 
@@ -152,7 +161,7 @@ func TestQuoteWithoutAnyMarketData(t *testing.T) {
 	})
 
 	_, err := service.RiskQuote(t.Context(), []byte(validQuote))
-	require.ErrorIs(t, err, apperr.ErrNotFound)
+	require.ErrorIs(t, err, apperr.ErrUnavailable)
 }
 
 func TestQuoteValidation(t *testing.T) {

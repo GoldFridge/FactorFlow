@@ -190,6 +190,19 @@ func (s *Service) Redeem(ctx context.Context, endpoint string, body []byte, paym
 	}
 
 	if err := s.check(ctx, request, endpoint, body, payment); err != nil {
+		// A dependency that could not be asked is not a verdict on the payment. The
+		// commonest case is honest and temporary: a mirror lags consensus, so a payment
+		// that was made seconds ago is not visible yet. Rejecting the quote for that would
+		// charge a machine customer for an answer it can never collect, because the quote
+		// it paid against is spent — so the quote stays payable and the client is told to
+		// come back.
+		if !refusesThePayment(err) {
+			// A dependency that could not be asked, or a conflict about who is already
+			// paying, says nothing about whether this payment is good. Recording either as a
+			// rejection would let an outage — or a stranger turning up with a proof of their
+			// own — burn a quote somebody else has already paid for.
+			return Result{}, err
+		}
 		if rejectErr := s.reject(ctx, request, err); rejectErr != nil {
 			return Result{}, rejectErr
 		}
@@ -199,13 +212,18 @@ func (s *Service) Redeem(ctx context.Context, endpoint string, body []byte, paym
 	// Signed and verified are stored before the work runs. If the work then fails, the
 	// record still shows a paid request that owes an answer, which is the state
 	// reconciliation can act on; the alternative is a payment nobody can account for.
-	if err := s.advance(ctx, request, func(r *Request) error {
-		if err := r.Sign(payment.Payer, payment.TxID, s.now()); err != nil {
-			return err
+	// A customer that already paid and did not get an answer is asking again with the same
+	// payment. Signing it a second time would be a state machine talking to itself; what it
+	// is owed is the work, so the work is what happens.
+	if request.State == StatePaymentRequired {
+		if err := s.advance(ctx, request, func(r *Request) error {
+			if err := r.Sign(payment.Payer, payment.TxID, s.now()); err != nil {
+				return err
+			}
+			return r.Verify(s.now())
+		}); err != nil {
+			return Result{}, err
 		}
-		return r.Verify(s.now())
-	}); err != nil {
-		return Result{}, err
 	}
 
 	response, err := work(ctx, body)
@@ -243,12 +261,35 @@ func (s *Service) check(ctx context.Context, request *Request, endpoint string, 
 		return apperr.Forbiddenf("the payment was quoted for a different request body")
 	case request.IsExpired(s.now()):
 		return apperr.Forbiddenf("the quoted price expired at %s", request.ExpiresAt.Format(time.RFC3339))
-	case request.State != StatePaymentRequired:
+	case request.State == StateRejected:
+		return apperr.Conflictf("this quote was rejected: %s", request.Reason)
+	case request.State != StatePaymentRequired && !request.PaidBy(payment):
+		// Somebody else's payment, or a different one, against a quote that is already
+		// being fulfilled.
 		return apperr.Conflictf("this quote is %s and cannot be paid again", request.State)
 	}
 
 	requirement := request.Requirement(s.scheme, s.network, s.recipient, s.asset)
 	return s.facilitator.Verify(ctx, requirement, payment)
+}
+
+/*
+refusesThePayment reports whether an error is a verdict on this payment.
+
+Two kinds of failure are not verdicts, and both would do real damage if recorded as one.
+
+A dependency that could not be asked says nothing about whether the money moved: a mirror
+lags consensus by seconds, so rejecting there would charge a machine customer for an answer
+it can never collect. A conflict says the quote is already being paid by somebody — and if
+a stranger's proof could reject it, anybody could burn a quote another party had paid for by
+sending one request.
+
+Everything else is treated as a refusal, including an error this code cannot classify. That
+direction is deliberate: a verification failure nobody can name is not something to let a
+client retry forever, and the reason is recorded so it is told the same way every time.
+*/
+func refusesThePayment(err error) bool {
+	return !apperr.IsUnavailable(err) && !apperr.IsConflict(err)
 }
 
 // reject records why a payment was refused, so a client asking again is told the same
