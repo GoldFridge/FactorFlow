@@ -688,7 +688,7 @@ no third-party facilitator here and none is needed: verifying a Hedera payment t
 credentials, and outsourcing it would only add somebody else to trust.
 */
 func paymentFacilitator(cfg config.Config, chain *hedera.Client, now func() time.Time) payments.Facilitator {
-	if chain == nil || !strings.HasPrefix(cfg.Paid.Recipient, "0.0.") {
+	if chain == nil || !cfg.PaidIsLive() {
 		return payments.NewLocalFacilitator(cfg.Paid.Recipient, now)
 	}
 

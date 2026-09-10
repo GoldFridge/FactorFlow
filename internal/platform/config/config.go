@@ -80,12 +80,7 @@ type PaidAPI struct {
 	// Network and Asset are what the 402 tells a client to pay in.
 	Network string
 	Asset   string
-	// FacilitatorURL is the external verifier. Empty selects the in-process facilitator.
-	FacilitatorURL string
 }
-
-// IsLive reports whether a real facilitator is configured.
-func (p PaidAPI) IsLive() bool { return p.FacilitatorURL != "" }
 
 // Providers holds the credentials and endpoints of the external systems.
 type Providers struct {
@@ -165,7 +160,6 @@ func Load() (Config, error) {
 			Recipient:      envOr("FF_PAID_RECIPIENT", developmentPaymentRecipient),
 			Network:        envOr("FF_PAID_NETWORK", "local"),
 			Asset:          envOr("FF_PAID_ASSET", "USDC"),
-			FacilitatorURL: os.Getenv("FF_PAID_FACILITATOR_URL"),
 		},
 	}
 
@@ -232,6 +226,23 @@ func (c Config) validate() error {
 	return errors.Join(violations...)
 }
 
+/*
+PaidIsLive reports whether machine customers are charged on a network.
+
+There is no facilitator setting to read, because there is no facilitator: verifying a Hedera
+payment takes a public mirror and no credentials. What decides it is what the wiring decides
+it by — an account to be paid into, and the keys to reach the network with — and the wiring
+asks this rather than repeating the test, so a startup line cannot claim one thing while the
+process does another.
+*/
+func (c Config) PaidIsLive() bool {
+	return c.Providers.HederaIsLive() && strings.HasPrefix(c.Paid.Recipient, hederaAccountPrefix)
+}
+
+// hederaAccountPrefix begins every Hedera account id. An address in any other shape is not
+// somewhere this network can send anything.
+const hederaAccountPrefix = "0.0."
+
 // DemoAuthEnabled reports whether the header-based demo authentication may be used.
 //
 // It is development-only, and deliberately so: it accepts an organization id from a header,
@@ -250,7 +261,7 @@ func (c Config) Summary() string {
 		liveOrFake(c.Providers.CREIsLive()),
 		liveOrFake(c.Providers.HederaIsLive()),
 		liveOrFake(c.Providers.LLMIsLive()),
-		liveOrFake(c.Paid.IsLive()),
+		liveOrFake(c.PaidIsLive()),
 	)
 }
 

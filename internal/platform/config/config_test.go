@@ -26,6 +26,7 @@ func TestLoadDefaults(t *testing.T) {
 	assert.False(t, cfg.Providers.GraphIsLive(), "no credentials means the in-process provider")
 	assert.False(t, cfg.Providers.CREIsLive())
 	assert.False(t, cfg.Providers.HederaIsLive())
+	assert.False(t, cfg.PaidIsLive(), "and nothing to charge a machine customer with")
 }
 
 func TestLoadFromEnvironment(t *testing.T) {
@@ -41,7 +42,6 @@ func TestLoadFromEnvironment(t *testing.T) {
 	t.Setenv("FF_HEDERA_PRIVATE_KEY", "302e...")
 	t.Setenv("FF_PAID_RECIPIENT", "0.0.4402")
 	t.Setenv("FF_PAID_PRICE", "0.50")
-	t.Setenv("FF_PAID_FACILITATOR_URL", "https://facilitator.example")
 
 	cfg, err := config.Load()
 	require.NoError(t, err)
@@ -56,7 +56,7 @@ func TestLoadFromEnvironment(t *testing.T) {
 	assert.True(t, cfg.Providers.CREIsLive())
 	assert.True(t, cfg.Providers.HederaIsLive())
 	assert.False(t, cfg.DemoAuthEnabled(), "a production deployment never trusts the demo header")
-	assert.True(t, cfg.Paid.IsLive())
+	assert.True(t, cfg.PaidIsLive(), "an account to be paid into, and the keys to reach it")
 	assert.Equal(t, "0.50", cfg.Paid.Price, "a price is carried as a decimal string, never a float")
 	assert.Equal(t, "0.0.4402", cfg.Paid.Recipient)
 }
@@ -165,4 +165,39 @@ func TestSummaryHandlesAURLWithoutCredentials(t *testing.T) {
 	cfg, err := config.Load()
 	require.NoError(t, err)
 	assert.Contains(t, cfg.Summary(), "postgres://localhost:5432/factorflow")
+}
+
+/*
+TestTheStartupLineDoesNotLieAboutPayments.
+
+The line a server prints on start is how an operator learns which integrations are live, and
+it used to read the wrong thing: paid was decided by a facilitator URL nobody sets, so a
+process charging real HBAR announced itself as in-process on the line above the one saying
+it was charging on Hedera. The two now come from the same question.
+*/
+func TestTheStartupLineDoesNotLieAboutPayments(t *testing.T) {
+	t.Setenv("FF_DATABASE_URL", "postgres://app:secret@db.internal:5432/factorflow")
+	t.Setenv("FF_HEDERA_ACCOUNT_ID", "0.0.1234")
+	t.Setenv("FF_HEDERA_PRIVATE_KEY", "302e...")
+	t.Setenv("FF_PAID_RECIPIENT", "0.0.4402")
+
+	live, err := config.Load()
+	require.NoError(t, err)
+	assert.True(t, live.PaidIsLive())
+	assert.Contains(t, live.Summary(), "paid=live")
+
+	// An EVM address is not somewhere Hedera can transfer anything, so it selects the
+	// in-process facilitator however real the credentials beside it are.
+	t.Setenv("FF_PAID_RECIPIENT", "0x0000000000000000000000000000000000000402")
+	evm, err := config.Load()
+	require.NoError(t, err)
+	assert.False(t, evm.PaidIsLive())
+	assert.Contains(t, evm.Summary(), "paid=in-process")
+
+	// And keys without an account to pay into are keys for something else.
+	t.Setenv("FF_PAID_RECIPIENT", "0.0.4402")
+	t.Setenv("FF_HEDERA_PRIVATE_KEY", "")
+	keyless, err := config.Load()
+	require.NoError(t, err)
+	assert.False(t, keyless.PaidIsLive())
 }
