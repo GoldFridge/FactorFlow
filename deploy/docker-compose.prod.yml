@@ -39,6 +39,15 @@ services:
     # Not published: nothing outside this network has any business reaching the database.
 
   app:
+    # Named, so the image can be built somewhere with cores to spare and carried to the
+    # server rather than built on it. A 1 vCPU box with 2 GB of RAM compiling Go beside
+    # npm is a deployment that fails at the worst moment, and the finished image is 43 MB:
+    #
+    #   docker save factorflow:demo | gzip | ssh root@host 'gunzip | docker load'
+    #
+    # build: stays for anyone who does want to build in place, and compose uses the image
+    # when it is already there.
+    image: factorflow:${VERSION:-demo}
     build:
       context: ..
       dockerfile: Dockerfile
