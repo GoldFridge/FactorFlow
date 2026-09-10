@@ -231,5 +231,9 @@ func (o Order) validate() error {
 // the same identifiers on every run of the same demo.
 func localTxID(operationID string) string {
 	sum := sha256.Sum256([]byte("local-tx|" + operationID))
-	return "local-" + hex.EncodeToString(sum[:16])
+	return localTxPrefix + hex.EncodeToString(sum[:16])
 }
+
+// localTxPrefix marks a transaction this process performed itself, so a later reader knows
+// which executor to ask about it.
+const localTxPrefix = "local-"

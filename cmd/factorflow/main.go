@@ -738,10 +738,16 @@ func transferExecutor(cfg config.Config, chain *hedera.Client, now func() time.T
 		slog.String("network", chain.Network()),
 		slog.String("mirror", hedera.MirrorURL(cfg.Providers.HederaNetwork)))
 
-	return settlement.NewChainExecutor(hederaChain{
-		client: chain,
-		mirror: hedera.NewMirror(cfg.Providers.HederaNetwork, ""),
-	})
+	// Routed rather than chosen once, because a chain being configured says this platform
+	// can settle on one, not that every participant can receive on one. A transfer to
+	// somebody with no account belongs in process, where it can actually complete.
+	return settlement.NewRoutedExecutor(
+		settlement.NewChainExecutor(hederaChain{
+			client: chain,
+			mirror: hedera.NewMirror(cfg.Providers.HederaNetwork, ""),
+		}),
+		settlement.NewLocalExecutor(now),
+	)
 }
 
 // hederaChain adapts the platform client to what settlement asks of a network.

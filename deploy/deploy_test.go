@@ -115,4 +115,14 @@ func TestTLSIsTerminatedForTheCookie(t *testing.T) {
 	if !strings.Contains(caddy, "{$DOMAIN}") {
 		t.Error("the site is not bound to DOMAIN, so Caddy has no name to get a certificate for")
 	}
+
+	// www is the address people type. Serving it a second copy rather than redirecting would
+	// split the session cookie across two hosts, so following a link to the other name would
+	// silently sign somebody out.
+	if !strings.Contains(caddy, "www.{$DOMAIN}") {
+		t.Error("www is not answered at all, so half the links to this demo reach nothing")
+	}
+	if !strings.Contains(caddy, "redir https://{$DOMAIN}{uri} permanent") {
+		t.Error("www serves its own copy instead of redirecting to the canonical name")
+	}
 }

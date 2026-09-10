@@ -17,3 +17,10 @@
 		format console
 	}
 }
+
+# www is the address people type and link, so it has to work — but it redirects rather than
+# serving a second copy. A session cookie belongs to one host: served on both, somebody who
+# signed in at one name would find themselves signed out by following a link to the other.
+www.{$DOMAIN} {
+	redir https://{$DOMAIN}{uri} permanent
+}

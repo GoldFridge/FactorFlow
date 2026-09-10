@@ -112,3 +112,67 @@ func (e *ChainExecutor) Lookup(ctx context.Context, txID string) (Record, error)
 
 // Network names the chain these transfers happen on.
 func (e *ChainExecutor) Network() string { return e.chain.Network() }
+
+// accountPrefix begins every Hedera account id. A destination in any other shape — a wallet
+// address, say — is not an account, and a network cannot deliver to it.
+const accountPrefix = "0.0."
+
+// DeliverableOnChain reports whether tokens can actually be sent to a destination.
+//
+// An investor who signed in with a browser wallet has an address the platform can check a
+// signature against and nothing it can transfer to: on Hedera a token goes to an account
+// that exists and has associated it. Opening that account costs something on a real network,
+// so it is a deliberate act — until it has happened, this returns false.
+func DeliverableOnChain(destination string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(destination)), accountPrefix)
+}
+
+/*
+RoutedExecutor sends a transfer wherever it can actually arrive.
+
+Configuring a chain says the platform can settle on one, not that every participant can
+receive on one, and those are different facts. A transfer to somebody with no account was
+submitted to the network anyway and came back TOKEN_NOT_ASSOCIATED_TO_ACCOUNT — a real
+transaction, a real fee, and a settlement that could never complete however often it was
+retried, because the destination stored on it was never an account.
+
+So the decision is made per transfer rather than per process: to an account, on the network;
+to anyone else, in process, which is what the demo dataset needs, because its participants
+are seeded a moment before their first settlement and nobody has opened accounts for them
+yet.
+*/
+type RoutedExecutor struct {
+	chain Executor
+	local Executor
+}
+
+// NewRoutedExecutor returns an executor that chooses between the two.
+func NewRoutedExecutor(chain, local Executor) *RoutedExecutor {
+	return &RoutedExecutor{chain: chain, local: local}
+}
+
+// Submit sends the order to the network when its destination is an account there.
+func (e *RoutedExecutor) Submit(ctx context.Context, order Order) (Receipt, error) {
+	return e.executorFor(order.ToWallet).Submit(ctx, order)
+}
+
+/*
+Lookup asks whoever performed the transfer.
+
+The transaction id says which that was: the in-process ledger names its transactions after
+itself, and a network's identifiers never take that shape. Asking the wrong one would report
+a transfer as missing rather than as settled.
+*/
+func (e *RoutedExecutor) Lookup(ctx context.Context, txID string) (Record, error) {
+	if strings.HasPrefix(strings.TrimSpace(txID), localTxPrefix) {
+		return e.local.Lookup(ctx, txID)
+	}
+	return e.chain.Lookup(ctx, txID)
+}
+
+func (e *RoutedExecutor) executorFor(destination string) Executor {
+	if DeliverableOnChain(destination) {
+		return e.chain
+	}
+	return e.local
+}
