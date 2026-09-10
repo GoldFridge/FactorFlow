@@ -1,15 +1,26 @@
 # The demo, as it runs on a server: the database, the application, and a reverse proxy that
 # gets a certificate on its own.
 #
-# Run it from the repository root:
+# Run it from the repository root. --env-file is not optional: this file lives in deploy/,
+# so without it Compose looks for deploy/.env and refuses to start over a POSTGRES_PASSWORD
+# that is sitting in the repository root, which is where .env.example puts it.
 #
-#   docker compose -f deploy/docker-compose.prod.yml build
-#   docker compose -f deploy/docker-compose.prod.yml run --rm app seed
-#   docker compose -f deploy/docker-compose.prod.yml up -d
+#   docker compose --env-file .env -f deploy/docker-compose.prod.yml build
+#   docker compose --env-file .env -f deploy/docker-compose.prod.yml run --rm app seed
+#   docker compose --env-file .env -f deploy/docker-compose.prod.yml up -d
+#   docker compose --env-file .env -f deploy/docker-compose.prod.yml run --rm app #       operator 0xYourWallet "FactorFlow Operations"
 #
 # The seed runs as its own container rather than inside the running one, because both the
 # server and the seeder drive the same outbox: whichever is running claims the work, and a
 # seed racing a server is how a demo ends up with data that came from two different builds.
+#
+# The last step is what makes the deployment usable by a person: production approves nobody
+# automatically and registration refuses to mint an operator, so until a wallet is admitted
+# this way there is nobody on the server who can approve the first participant.
+#
+# The application's own settings come from that same root .env through env_file, and the
+# values set under environment: below win over it. A development .env therefore deploys as
+# production without being edited, which is the only reason it is safe to point at it.
 services:
   postgres:
     image: postgres:17-alpine
