@@ -97,7 +97,12 @@ type Providers struct {
 	GraphAPIKey     string
 	GraphGatewayURL string
 	CREEndpoint     string
-	LLMAPIKey       string
+	// LLM is the model that puts a published score into words. It never decides anything:
+	// the assessment exists before it is asked, and what it writes is checked against the
+	// numbers that assessment published.
+	LLMAPIKey  string
+	LLMBaseURL string
+	LLMModel   string
 	// GraphNetwork and GraphAsset name the question the benchmark answers: which chain's
 	// lending markets, denominated in what.
 	GraphNetwork string
@@ -106,6 +111,9 @@ type Providers struct {
 
 // GraphIsLive reports whether a live Graph gateway is configured.
 func (p Providers) GraphIsLive() bool { return p.GraphAPIKey != "" && p.GraphGatewayURL != "" }
+
+// LLMIsLive reports whether a model is configured to narrate assessments.
+func (p Providers) LLMIsLive() bool { return p.LLMAPIKey != "" && p.LLMModel != "" }
 
 // CREIsLive reports whether a live confidential workflow is configured.
 func (p Providers) CREIsLive() bool { return p.CREEndpoint != "" }
@@ -143,6 +151,8 @@ func Load() (Config, error) {
 			GraphAsset:       envOr("FF_GRAPH_ASSET", "USDC"),
 			CREEndpoint:      os.Getenv("FF_CRE_ENDPOINT"),
 			LLMAPIKey:        os.Getenv("FF_LLM_API_KEY"),
+			LLMBaseURL:       envOr("FF_LLM_BASE_URL", "https://api.deepseek.com"),
+			LLMModel:         envOr("FF_LLM_MODEL", "deepseek-chat"),
 		},
 		Paid: PaidAPI{
 			Price:          envOr("FF_PAID_PRICE", "0.25"),
@@ -226,7 +236,7 @@ func (c Config) DemoAuthEnabled() bool { return c.Env == Development }
 // Summary renders the configuration for a startup log line, with every secret redacted.
 func (c Config) Summary() string {
 	return fmt.Sprintf(
-		"env=%s addr=%s log=%s database=%s web=%s auto-approve=%t graph=%s cre=%s hedera=%s paid=%s",
+		"env=%s addr=%s log=%s database=%s web=%s auto-approve=%t graph=%s cre=%s hedera=%s llm=%s paid=%s",
 		c.Env, c.HTTPAddr, c.LogLevel,
 		redactURL(c.DatabaseURL),
 		servedOrNot(c.WebDir),
@@ -234,6 +244,7 @@ func (c Config) Summary() string {
 		liveOrFake(c.Providers.GraphIsLive()),
 		liveOrFake(c.Providers.CREIsLive()),
 		liveOrFake(c.Providers.HederaIsLive()),
+		liveOrFake(c.Providers.LLMIsLive()),
 		liveOrFake(c.Paid.IsLive()),
 	)
 }

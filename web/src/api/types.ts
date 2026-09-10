@@ -239,6 +239,10 @@ export interface Assessment {
   requires_manual_review: boolean;
   created_at: string;
   market_snapshot?: MarketSnapshot;
+  /** Words about this price, and who wrote them: a checked model, or the coefficients. */
+  explanation?: string[];
+  explanation_source?: string;
+  explanation_model?: string;
 }
 
 export interface AuditEvent {

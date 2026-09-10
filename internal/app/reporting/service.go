@@ -92,6 +92,9 @@ type Report struct {
 	Snapshot   *marketdata.Snapshot
 	// Contributions are ordered by how much each feature moved the score.
 	Contributions []risk.Contribution
+	// Explanation is the words stored about this price. It names its own source, because a
+	// sentence from a model and one derived from the coefficients carry different authority.
+	Explanation *risk.Explanation
 }
 
 // Disclosure is one listed receivable as a participant of the venue may read it.
@@ -192,6 +195,14 @@ func (s *Service) reportFor(ctx context.Context, invoiceID uuid.UUID) (*Report, 
 	}
 
 	report := &Report{Assessment: assessment, Contributions: assessment.RankedContributions()}
+
+	// The narration is best-effort in the same way as the snapshot: words about a price are
+	// not the price, and a missing one must not hide the numbers.
+	if explanation, err := s.assessments.GetExplanation(ctx, s.db.Querier(), assessment.ID); err == nil {
+		report.Explanation = explanation
+	} else if !apperr.IsNotFound(err) {
+		return nil, err
+	}
 
 	// The snapshot is best-effort: an assessment stays explainable even if the snapshot row
 	// was pruned, and a missing benchmark should not hide the score it produced.

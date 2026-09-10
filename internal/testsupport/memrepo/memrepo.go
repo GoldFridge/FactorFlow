@@ -87,6 +87,7 @@ type Store struct {
 	invoices      map[uuid.UUID]invoice.Invoice
 	documents     map[uuid.UUID]invoice.Document
 	assessments   map[uuid.UUID]risk.Assessment
+	explanations  map[uuid.UUID]risk.Explanation
 	snapshots     map[string]marketdata.Snapshot
 	assets        map[uuid.UUID]tokenization.Asset
 	auctions      map[uuid.UUID]auction.Auction
@@ -109,17 +110,18 @@ type state struct {
 	challenges    map[string]identity.Challenge
 	sessions      map[string]identity.Session
 
-	invoices    map[uuid.UUID]invoice.Invoice
-	documents   map[uuid.UUID]invoice.Document
-	assessments map[uuid.UUID]risk.Assessment
-	snapshots   map[string]marketdata.Snapshot
-	assets      map[uuid.UUID]tokenization.Asset
-	auctions    map[uuid.UUID]auction.Auction
-	bids        map[uuid.UUID]auction.Bid
-	solutions   map[uuid.UUID]auction.Solution
-	settlements map[uuid.UUID]settlement.Settlement
-	repayments  map[uuid.UUID]redemption.Repayment
-	events      []audit.Event
+	invoices     map[uuid.UUID]invoice.Invoice
+	documents    map[uuid.UUID]invoice.Document
+	assessments  map[uuid.UUID]risk.Assessment
+	explanations map[uuid.UUID]risk.Explanation
+	snapshots    map[string]marketdata.Snapshot
+	assets       map[uuid.UUID]tokenization.Asset
+	auctions     map[uuid.UUID]auction.Auction
+	bids         map[uuid.UUID]auction.Bid
+	solutions    map[uuid.UUID]auction.Solution
+	settlements  map[uuid.UUID]settlement.Settlement
+	repayments   map[uuid.UUID]redemption.Repayment
+	events       []audit.Event
 }
 
 // New returns an empty store.
@@ -129,17 +131,18 @@ func New() *Store {
 		challenges:    map[string]identity.Challenge{},
 		sessions:      map[string]identity.Session{},
 
-		invoices:    map[uuid.UUID]invoice.Invoice{},
-		documents:   map[uuid.UUID]invoice.Document{},
-		assessments: map[uuid.UUID]risk.Assessment{},
-		snapshots:   map[string]marketdata.Snapshot{},
-		assets:      map[uuid.UUID]tokenization.Asset{},
-		auctions:    map[uuid.UUID]auction.Auction{},
-		bids:        map[uuid.UUID]auction.Bid{},
-		solutions:   map[uuid.UUID]auction.Solution{},
-		settlements: map[uuid.UUID]settlement.Settlement{},
-		repayments:  map[uuid.UUID]redemption.Repayment{},
-		querier:     &Querier{},
+		invoices:     map[uuid.UUID]invoice.Invoice{},
+		documents:    map[uuid.UUID]invoice.Document{},
+		assessments:  map[uuid.UUID]risk.Assessment{},
+		explanations: map[uuid.UUID]risk.Explanation{},
+		snapshots:    map[string]marketdata.Snapshot{},
+		assets:       map[uuid.UUID]tokenization.Asset{},
+		auctions:     map[uuid.UUID]auction.Auction{},
+		bids:         map[uuid.UUID]auction.Bid{},
+		solutions:    map[uuid.UUID]auction.Solution{},
+		settlements:  map[uuid.UUID]settlement.Settlement{},
+		repayments:   map[uuid.UUID]redemption.Repayment{},
+		querier:      &Querier{},
 	}
 }
 
@@ -201,6 +204,7 @@ func (s *Store) rollback() {
 	s.invoices = s.snapshot.invoices
 	s.documents = s.snapshot.documents
 	s.assessments = s.snapshot.assessments
+	s.explanations = s.snapshot.explanations
 	s.snapshots = s.snapshot.snapshots
 	s.assets = s.snapshot.assets
 	s.auctions = s.snapshot.auctions
@@ -438,6 +442,31 @@ func (r *assessmentRepo) Get(_ context.Context, _ postgres.Querier, id uuid.UUID
 		return nil, apperr.NotFoundf("risk assessment %s", id)
 	}
 	copied := stored
+	return &copied, nil
+}
+
+func (r *assessmentRepo) SaveExplanation(_ context.Context, _ postgres.Querier, e *risk.Explanation) error {
+	s := r.store()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	copied := *e
+	copied.Bullets = append([]string(nil), e.Bullets...)
+	s.explanations[e.AssessmentID] = copied
+	return nil
+}
+
+func (r *assessmentRepo) GetExplanation(_ context.Context, _ postgres.Querier, assessmentID uuid.UUID) (*risk.Explanation, error) {
+	s := r.store()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	stored, ok := s.explanations[assessmentID]
+	if !ok {
+		return nil, apperr.NotFoundf("explanation of assessment %s", assessmentID)
+	}
+	copied := stored
+	copied.Bullets = append([]string(nil), stored.Bullets...)
 	return &copied, nil
 }
 

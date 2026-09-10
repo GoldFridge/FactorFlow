@@ -39,6 +39,7 @@ import (
 	"github.com/GoldFridge/factorflow/internal/platform/hedera"
 	"github.com/GoldFridge/factorflow/internal/platform/httpserver"
 	"github.com/GoldFridge/factorflow/internal/platform/idempotency"
+	"github.com/GoldFridge/factorflow/internal/platform/llm"
 	"github.com/GoldFridge/factorflow/internal/platform/money"
 	"github.com/GoldFridge/factorflow/internal/platform/objects"
 	"github.com/GoldFridge/factorflow/internal/platform/outbox"
@@ -327,7 +328,9 @@ func wire(cfg config.Config, db *postgres.DB, clk *clock.Clock, ids func() uuid.
 		IDs:         ids,
 	})
 
+	narrator := assessment.NewNarrator(narratorClient(cfg), now)
 	assessmentWorker := assessment.NewAssessmentWorker(assessment.WorkerConfig{
+		Narrator:    narrator,
 		DB:          db,
 		Invoices:    invoices,
 		Assessments: assessments,
@@ -593,6 +596,25 @@ func webApp(cfg config.Config) http.Handler {
 	}
 	slog.Info("serving the interface", slog.String("dir", cfg.WebDir))
 	return web
+}
+
+// narratorClient is the model that explains a published score, when one is configured.
+//
+// It is the only place a language model enters this system, and it enters after every
+// number has been decided: nothing it says can change a price, and what it writes is
+// checked against what the assessment published before it is kept.
+func narratorClient(cfg config.Config) *llm.Client {
+	client := llm.New(llm.Config{
+		BaseURL: cfg.Providers.LLMBaseURL,
+		APIKey:  cfg.Providers.LLMAPIKey,
+		Model:   cfg.Providers.LLMModel,
+	})
+	if client == nil {
+		slog.Info("no model is configured; assessments are explained from their own contributions")
+		return nil
+	}
+	slog.Info("explaining assessments with a model", slog.String("model", client.Model()))
+	return client
 }
 
 // hederaClient connects when credentials are present, and reports why it could not rather

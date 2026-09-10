@@ -258,6 +258,27 @@ Stop the server before seeding. Both processes run the same outbox dispatcher, a
 server will happily claim the seed's work — which is correct behaviour for competing
 consumers, and confusing when the two were started with different configuration.
 
+## What the model is allowed to do
+
+A language model writes the sentences under a published price and cannot touch the price
+itself. By the time it is asked, the assessment is stored: the score, the grade, the
+premiums and the reserve price already exist and are what the venue prices against.
+
+The boundary is enforced rather than requested. What the model writes is checked against the
+set of numbers that assessment published, in the shapes a writer would use them — 0.036325,
+3.63%, 3.6 — and a figure that is not in that set costs the whole narration, not the
+sentence that carried it. What replaces it is a narration this codebase derives from the
+same contributions, which is what a reader sees whenever no model answered, the call timed
+out, or what came back cited something nobody published.
+
+The prompt is also the whole of what the model may see: a feature vector, six weighted
+contributions and the prices those produced. No document text, no invoice number, no debtor,
+no party. The privacy rule is not enforced by asking politely — the content is not there.
+
+Set `FF_LLM_API_KEY` (and optionally `FF_LLM_BASE_URL`, `FF_LLM_MODEL`, which default to
+DeepSeek) to turn it on. Without a key, every assessment is explained from its own
+coefficients, and the screen says which of the two it is showing.
+
 ## Double financing
 
 A receivable is fingerprinted by its economic identity — which debtor owes how much, under

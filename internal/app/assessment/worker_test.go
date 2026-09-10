@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,6 +21,7 @@ import (
 	"github.com/GoldFridge/factorflow/internal/marketdata"
 	"github.com/GoldFridge/factorflow/internal/platform/apperr"
 	"github.com/GoldFridge/factorflow/internal/platform/audit"
+	"github.com/GoldFridge/factorflow/internal/platform/llm"
 	"github.com/GoldFridge/factorflow/internal/platform/money"
 	"github.com/GoldFridge/factorflow/internal/platform/outbox"
 	"github.com/GoldFridge/factorflow/internal/platform/postgres"
@@ -117,8 +121,9 @@ func (f *fakeInvoices) GetDocument(context.Context, postgres.Querier, uuid.UUID)
 }
 
 type fakeAssessments struct {
-	saved    []*risk.Assessment
-	saveFail error
+	saved     []*risk.Assessment
+	explained map[uuid.UUID]*risk.Explanation
+	saveFail  error
 }
 
 func (f *fakeAssessments) Save(_ context.Context, _ postgres.Querier, a *risk.Assessment) error {
@@ -136,6 +141,21 @@ func (f *fakeAssessments) Latest(context.Context, postgres.Querier, uuid.UUID) (
 		return nil, apperr.NotFoundf("assessment")
 	}
 	return f.saved[len(f.saved)-1], nil
+}
+
+func (f *fakeAssessments) SaveExplanation(_ context.Context, _ postgres.Querier, e *risk.Explanation) error {
+	if f.explained == nil {
+		f.explained = map[uuid.UUID]*risk.Explanation{}
+	}
+	f.explained[e.AssessmentID] = e
+	return nil
+}
+
+func (f *fakeAssessments) GetExplanation(_ context.Context, _ postgres.Querier, id uuid.UUID) (*risk.Explanation, error) {
+	if e, ok := f.explained[id]; ok {
+		return e, nil
+	}
+	return nil, apperr.NotFoundf("explanation of assessment %s", id)
 }
 
 type fakeSnapshots struct{ saved []*marketdata.Snapshot }
@@ -559,4 +579,120 @@ func TestAFailedAssessmentRecordsNothing(t *testing.T) {
 	require.Error(t, f.worker.Handle(t.Context(), f.event(t)))
 
 	assert.Empty(t, f.trail.Events())
+}
+
+// modelSaying stands in for a language model that answers with these lines.
+func modelSaying(t *testing.T, lines ...string) *httptest.Server {
+	t.Helper()
+
+	answer := strings.Join(lines, "\n")
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		body, err := json.Marshal(map[string]any{
+			"choices": []any{map[string]any{"message": map[string]string{
+				"role": "assistant", "content": answer,
+			}}},
+		})
+		require.NoError(t, err)
+		_, _ = w.Write(body)
+	}))
+}
+
+// narratedBy points the fixture's worker at a model.
+func (f *workerFixture) narratedBy(t *testing.T, baseURL string) {
+	t.Helper()
+
+	f.worker = assessment.NewAssessmentWorker(assessment.WorkerConfig{
+		DB:          f.db,
+		Invoices:    f.invoices,
+		Assessments: f.assessments,
+		Snapshots:   f.snapshots,
+		Market: marketdata.NewService(
+			marketdata.NewStaticProvider(marketdata.DemoMarkets()...),
+			marketdata.NewNormalizer(),
+			func() time.Time { return f.clock },
+		),
+		Workflow: risk.NewDeterministicWorkflow(),
+		Model:    risk.ModelV1(),
+		Query:    marketdata.DemoQuery(),
+		Narrator: assessment.NewNarrator(
+			llm.New(llm.Config{BaseURL: baseURL, APIKey: "key", Model: "test-model"}),
+			func() time.Time { return f.clock },
+		),
+		Audit: f.trail,
+		Now:   func() time.Time { return f.clock },
+		IDs:   uuid.New,
+	})
+}
+
+// explanation is what a reader would be shown about the price that was just published.
+func (f *workerFixture) explanation(t *testing.T) *risk.Explanation {
+	t.Helper()
+
+	require.Len(t, f.assessments.saved, 1)
+	stored, err := f.assessments.GetExplanation(
+		context.Background(), nil, f.assessments.saved[0].ID)
+	require.NoError(t, err)
+	return stored
+}
+
+/*
+ * TestTheNarrationIsCheckedBeforeItIsKept is the AI boundary, tested where it is actually
+ * crossed. The model is asked about a price that is already stored, and a figure it did not
+ * get from the assessment costs it the whole narration — the reader is left with the derived
+ * one, which cites nothing that was not published.
+ */
+func TestTheNarrationIsCheckedBeforeItIsKept(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a model that invents a number is not published", func(t *testing.T) {
+		t.Parallel()
+
+		server := modelSaying(t, "- The discount is about 9.99% on this paper.")
+		defer server.Close()
+
+		f := newWorkerFixture(t, nil)
+		f.narratedBy(t, server.URL)
+		require.NoError(t, f.worker.Handle(context.Background(), f.event(t)))
+
+		stored := f.explanation(t)
+		assert.Equal(t, risk.SourceDerived, stored.Source,
+			"what it wrote was discarded, and the reader still has words")
+		assert.NotContains(t, strings.Join(stored.Bullets, " "), "9.99")
+	})
+
+	t.Run("a model that stays inside the published numbers is kept", func(t *testing.T) {
+		t.Parallel()
+
+		// The discount is deterministic for this fixture, so the narration can quote it the
+		// way a model would have to: by reading it off the assessment.
+		plain := newWorkerFixture(t, nil)
+		require.NoError(t, plain.worker.Handle(context.Background(), plain.event(t)))
+		discount := risk.Percent(plain.assessments.saved[0].DiscountAPR)
+
+		server := modelSaying(t,
+			"- Debtor risk dominated the score, with concentration behind it.",
+			"- The discount of "+discount+" is what this tenor is worth in the current market.")
+		defer server.Close()
+
+		f := newWorkerFixture(t, nil)
+		f.narratedBy(t, server.URL)
+		require.NoError(t, f.worker.Handle(context.Background(), f.event(t)))
+
+		stored := f.explanation(t)
+		assert.Equal(t, risk.SourceModel, stored.Source)
+		assert.Equal(t, "test-model", stored.Model)
+		require.Len(t, stored.Bullets, 2)
+		assert.Contains(t, stored.Bullets[0], "Debtor risk dominated")
+	})
+
+	t.Run("a model that cannot be reached costs the prose and nothing else", func(t *testing.T) {
+		t.Parallel()
+
+		f := newWorkerFixture(t, nil)
+		f.narratedBy(t, "http://127.0.0.1:1")
+
+		require.NoError(t, f.worker.Handle(context.Background(), f.event(t)),
+			"the price is published either way")
+		assert.Equal(t, risk.SourceDerived, f.explanation(t).Source)
+	})
 }

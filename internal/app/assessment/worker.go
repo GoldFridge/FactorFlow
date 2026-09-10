@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -32,6 +33,7 @@ import (
 // decision is made here by versioned deterministic code from those two inputs.
 type AssessmentWorker struct {
 	db          TxRunner
+	narrator    *Narrator
 	invoices    invoice.Repository
 	assessments risk.Repository
 	snapshots   marketdata.Repository
@@ -64,9 +66,12 @@ type WorkerConfig struct {
 	Model       risk.Model
 	// Query is the market question this deployment prices against.
 	Query marketdata.Query
-	Audit audit.Recorder
-	Now   func() time.Time
-	IDs   func() uuid.UUID
+	// Narrator puts the score into words. It is optional: without one, every assessment is
+	// explained by the derived narration.
+	Narrator *Narrator
+	Audit    audit.Recorder
+	Now      func() time.Time
+	IDs      func() uuid.UUID
 }
 
 // NewAssessmentWorker returns the worker.
@@ -84,8 +89,13 @@ func NewAssessmentWorker(cfg WorkerConfig) *AssessmentWorker {
 		cfg.Audit = audit.Discard{}
 	}
 
+	if cfg.Narrator == nil {
+		cfg.Narrator = NewNarrator(nil, cfg.Now)
+	}
+
 	return &AssessmentWorker{
 		db:          cfg.DB,
+		narrator:    cfg.Narrator,
 		invoices:    cfg.Invoices,
 		assessments: cfg.Assessments,
 		snapshots:   cfg.Snapshots,
@@ -146,7 +156,36 @@ func (w *AssessmentWorker) Handle(ctx context.Context, event outbox.Event) error
 		return w.recordFailure(ctx, command.InvoiceID, err)
 	}
 
-	return w.commit(ctx, inv, snapshot, assessment)
+	if err := w.commit(ctx, inv, snapshot, assessment); err != nil {
+		return err
+	}
+
+	// The narration happens after the price is stored and never blocks it. A model that is
+	// slow, unreachable or wrong about a number costs this invoice its prose and nothing
+	// else — which is the whole reason the deterministic path does not call one.
+	w.narrate(ctx, assessment)
+	return nil
+}
+
+// narrate replaces the derived explanation with a model's, when there is one worth keeping.
+func (w *AssessmentWorker) narrate(ctx context.Context, assessment *risk.Assessment) {
+	if !w.narrator.Available() {
+		return
+	}
+
+	explanation := w.narrator.Narrate(ctx, assessment)
+	if explanation == nil || explanation.Source != risk.SourceModel {
+		// The derived one is already stored, and rewriting it would only move its timestamp.
+		return
+	}
+
+	if err := w.db.InTx(ctx, func(q postgres.Querier) error {
+		return w.assessments.SaveExplanation(ctx, q, explanation)
+	}); err != nil {
+		slog.WarnContext(ctx, "the narration could not be stored",
+			slog.String("assessment_id", assessment.ID.String()),
+			slog.String("error", err.Error()))
+	}
 }
 
 // runWorkflow calls the confidential workflow and refuses a result it cannot trust.
@@ -224,6 +263,12 @@ func (w *AssessmentWorker) commit(ctx context.Context, inv *invoice.Invoice, sna
 			return err
 		}
 		if err := w.assessments.Save(ctx, q, assessment); err != nil {
+			return err
+		}
+		// The derived explanation lands with the assessment, so a reader is never looking at
+		// a price with no words beside it. A model's narration replaces it afterwards, if
+		// one answers and what it wrote survives checking.
+		if err := w.assessments.SaveExplanation(ctx, q, risk.Derive(assessment, w.now())); err != nil {
 			return err
 		}
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -24,6 +25,11 @@ type Repository interface {
 	Save(ctx context.Context, q postgres.Querier, assessment *Assessment) error
 	Get(ctx context.Context, q postgres.Querier, id uuid.UUID) (*Assessment, error)
 	Latest(ctx context.Context, q postgres.Querier, invoiceID uuid.UUID) (*Assessment, error)
+
+	// SaveExplanation stores or replaces the words about an assessment. It is separate from
+	// Save because the assessment is immutable and its narration is not.
+	SaveExplanation(ctx context.Context, q postgres.Querier, e *Explanation) error
+	GetExplanation(ctx context.Context, q postgres.Querier, assessmentID uuid.UUID) (*Explanation, error)
 }
 
 // PostgresRepository is the PostgreSQL implementation of Repository.
@@ -225,4 +231,54 @@ func scanAssessment(r row) (*Assessment, error) {
 	a.ReservePrice = reserve
 	a.CreatedAt = createdAt.UTC()
 	return &a, nil
+}
+
+// SaveExplanation stores the narration of an assessment, replacing whatever was there.
+//
+// Replacement is the normal case rather than an edge one: the derived explanation is
+// written with the assessment so a reader is never left without words, and a model's is
+// written over it if one answers and what it wrote survives checking.
+func (r *PostgresRepository) SaveExplanation(ctx context.Context, q postgres.Querier, e *Explanation) error {
+	bullets, err := json.Marshal(e.Bullets)
+	if err != nil {
+		return fmt.Errorf("encoding the explanation: %w", err)
+	}
+
+	const query = `
+		INSERT INTO assessment_explanations (assessment_id, source, model, bullets, created_at)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (assessment_id) DO UPDATE
+		   SET source = EXCLUDED.source,
+		       model = EXCLUDED.model,
+		       bullets = EXCLUDED.bullets,
+		       created_at = EXCLUDED.created_at`
+
+	_, err = q.Exec(ctx, query, e.AssessmentID, e.Source, e.Model, bullets, e.CreatedAt)
+	return postgres.Translate(err)
+}
+
+// GetExplanation returns the words stored about an assessment.
+func (r *PostgresRepository) GetExplanation(ctx context.Context, q postgres.Querier, assessmentID uuid.UUID) (*Explanation, error) {
+	const query = `
+		SELECT assessment_id, source, model, bullets, created_at
+		  FROM assessment_explanations
+		 WHERE assessment_id = $1`
+
+	var (
+		e       Explanation
+		bullets []byte
+	)
+	if err := q.QueryRow(ctx, query, assessmentID).
+		Scan(&e.AssessmentID, &e.Source, &e.Model, &bullets, &e.CreatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, apperr.NotFoundf("explanation of assessment %s", assessmentID)
+		}
+		return nil, postgres.Translate(err)
+	}
+	if err := json.Unmarshal(bullets, &e.Bullets); err != nil {
+		return nil, fmt.Errorf("decoding the explanation: %w", err)
+	}
+
+	e.CreatedAt = e.CreatedAt.UTC()
+	return &e, nil
 }

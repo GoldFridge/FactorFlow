@@ -142,6 +142,12 @@ type assessmentResponse struct {
 
 	// Snapshot is the market the benchmark was taken from, when it is still on record.
 	Snapshot *snapshotResponse `json:"market_snapshot,omitempty"`
+
+	// Explanation is words about this price, and Source says who wrote them: a model whose
+	// figures were checked against this assessment, or this codebase from the contributions.
+	Explanation       []string `json:"explanation,omitempty"`
+	ExplanationSource string   `json:"explanation_source,omitempty"`
+	ExplanationModel  string   `json:"explanation_model,omitempty"`
 }
 
 type premiumsResponse struct {
@@ -312,6 +318,12 @@ func (h *Handler) toAssessmentResponse(report *Report) assessmentResponse {
 
 		RequiresManualReview: a.RequiresManualReview,
 		CreatedAt:            a.CreatedAt.Format(time.RFC3339),
+	}
+
+	if report.Explanation != nil {
+		out.Explanation = report.Explanation.Bullets
+		out.ExplanationSource = report.Explanation.Source
+		out.ExplanationModel = report.Explanation.Model
 	}
 
 	if report.Snapshot != nil {

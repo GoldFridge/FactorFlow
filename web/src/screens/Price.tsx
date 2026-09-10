@@ -104,6 +104,30 @@ export function Price({ assessment }: { assessment: Assessment }) {
         </Panel>
       ) : null}
 
+      {assessment.explanation && assessment.explanation.length > 0 ? (
+        <Panel
+          title="In words"
+          aside={
+            <span className="tag">
+              {assessment.explanation_source === "model"
+                ? assessment.explanation_model || "model"
+                : "from the coefficients"}
+            </span>
+          }
+        >
+          <ul className="points">
+            {assessment.explanation.map((point) => (
+              <li key={point}>{point}</li>
+            ))}
+          </ul>
+          <p className="small faint" style={{ marginBottom: 0 }}>
+            {assessment.explanation_source === "model"
+              ? "Written by a model after the price was published, and kept only because every figure in it is one this assessment published. It decided nothing."
+              : "Written from the model's own contributions. No language model answered, or what it wrote cited a number this assessment did not publish."}
+          </p>
+        </Panel>
+      ) : null}
+
       <Panel title="Confidential run">
         <p className="muted small" style={{ marginTop: 0 }}>
           The document was scored inside the confidential workflow. What the platform stores
