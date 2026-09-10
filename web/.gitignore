@@ -1,2 +1,5 @@
 node_modules
 dist
+
+# TypeScript incremental build state: a local cache, and a diff nobody reads.
+*.tsbuildinfo
