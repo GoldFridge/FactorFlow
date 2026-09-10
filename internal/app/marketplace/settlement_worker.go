@@ -145,6 +145,21 @@ func (w *SettlementWorker) confirmMirror(ctx context.Context, plan *settlement.S
 		return nil, apperr.Unavailablef("transaction %s is not confirmed by an independent read", plan.TxID)
 	}
 
+	// Where the reader can say what moved, it is asked. A transaction that succeeded is not
+	// the same claim as a transaction that delivered this notional to this buyer, and the
+	// difference is the whole reason a second, independent confirmation exists.
+	if record.Credited != nil {
+		asset, err := w.assets.Get(ctx, w.service.db.Querier(), plan.AssetID)
+		if err != nil {
+			return nil, err
+		}
+		if !record.Credited(asset.TokenID, plan.ToWallet, plan.Notional.Minor()) {
+			return nil, fmt.Errorf(
+				"%w: transaction %s succeeded but did not credit %s with %s of token %s",
+				apperr.ErrConflict, plan.TxID, plan.ToWallet, plan.Notional, asset.TokenID)
+		}
+	}
+
 	return w.store(ctx, plan, func(p *settlement.Settlement) error {
 		return p.ConfirmMirror(w.service.now())
 	})

@@ -30,17 +30,18 @@ type PostgresRepository struct{}
 // NewPostgresRepository returns the repository.
 func NewPostgresRepository() *PostgresRepository { return &PostgresRepository{} }
 
-const organizationColumns = `id, type, name, wallet, eligibility, reason, version, created_at, updated_at`
+const organizationColumns = `id, type, name, wallet, eligibility, reason, chain_account_id, version, created_at, updated_at`
 
 // Create inserts a new organization.
 func (r *PostgresRepository) Create(ctx context.Context, q postgres.Querier, org *Organization) error {
 	const query = `
-		INSERT INTO organizations (id, type, name, wallet, eligibility, reason, version, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
+		INSERT INTO organizations (
+			id, type, name, wallet, eligibility, reason, chain_account_id, version, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
 
 	_, err := q.Exec(ctx, query,
 		org.ID, org.Type.String(), org.Name, org.Wallet, org.Eligibility.String(), org.Reason,
-		org.Version, org.CreatedAt, org.UpdatedAt)
+		org.ChainAccountID, org.Version, org.CreatedAt, org.UpdatedAt)
 	return postgres.Translate(err)
 }
 
@@ -81,12 +82,12 @@ func (r *PostgresRepository) Update(ctx context.Context, q postgres.Querier, org
 	const query = `
 		UPDATE organizations
 		   SET type = $2, name = $3, wallet = $4, eligibility = $5, reason = $6,
-		       version = $7, updated_at = $8
-		 WHERE id = $1 AND version = $9`
+		       chain_account_id = $7, version = $8, updated_at = $9
+		 WHERE id = $1 AND version = $10`
 
 	tag, err := q.Exec(ctx, query,
 		org.ID, org.Type.String(), org.Name, org.Wallet, org.Eligibility.String(), org.Reason,
-		org.Version, org.UpdatedAt, expectedVersion)
+		org.ChainAccountID, org.Version, org.UpdatedAt, expectedVersion)
 	if err != nil {
 		return postgres.Translate(err)
 	}
@@ -141,7 +142,7 @@ func scanOrganization(r row) (*Organization, error) {
 	)
 
 	if err := r.Scan(&org.ID, &orgType, &org.Name, &org.Wallet, &eligibility, &org.Reason,
-		&org.Version, &createdAt, &updatedAt); err != nil {
+		&org.ChainAccountID, &org.Version, &createdAt, &updatedAt); err != nil {
 		return nil, err
 	}
 

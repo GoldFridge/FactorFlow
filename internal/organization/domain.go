@@ -102,6 +102,11 @@ type Organization struct {
 	Eligibility Eligibility
 	Reason      string
 
+	// ChainAccountID is where this participant's tokens are delivered. It is empty until
+	// the platform has opened an account for them: a wallet address proves who signed, and
+	// is not somewhere a token can be sent.
+	ChainAccountID string
+
 	Version   int64
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -212,4 +217,36 @@ func (o *Organization) CanInvest() bool { return o.Type == TypeInvestor && o.IsE
 func (o *Organization) touch(now time.Time) {
 	o.Version++
 	o.UpdatedAt = now.UTC()
+}
+
+/*
+AttachChainAccount records the account this participant receives tokens at.
+
+It is set once. An account that could be repointed is a way to redirect somebody else's
+holdings, and nothing in this demo needs it to change: an account that has to move is a
+participant with a new account, not an old one with a new address.
+*/
+func (o *Organization) AttachChainAccount(accountID string, now time.Time) error {
+	account := strings.TrimSpace(accountID)
+	if account == "" {
+		return apperr.Invalid("chain_account_id", "must not be empty")
+	}
+	if o.ChainAccountID != "" && o.ChainAccountID != account {
+		return apperr.Conflictf("organization %s already receives tokens at %s",
+			o.ID, o.ChainAccountID)
+	}
+
+	o.ChainAccountID = account
+	o.Version++
+	o.UpdatedAt = now.UTC()
+	return nil
+}
+
+// Receives is where tokens for this participant are delivered: the account the platform
+// opened, or the wallet address when there is none, which is what the in-process ledger uses.
+func (o *Organization) Receives() string {
+	if o.ChainAccountID != "" {
+		return o.ChainAccountID
+	}
+	return o.Wallet
 }

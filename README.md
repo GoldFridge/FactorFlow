@@ -32,7 +32,7 @@ sign in with a wallet → upload a receivable, encrypted in the browser
 | Market data | **Live** Ethereum lending markets through The Graph gateway, hashed snapshots |
 | Batch auction | Min-cost max-flow, minimum lots, exposure repair, allocation certificate |
 | Independent verifier | Recomputes every constraint; 20 tampering cases covered |
-| Settlement | Saga with submit / consensus / mirror / account steps and reconciliation |
+| Settlement | **Live** transfers on Hedera testnet, confirmed against the public mirror |
 | Maturity | Repayment recorded by an operator, divided exactly among the holders |
 | Tokenization | **Live** minting on Hedera testnet through the HTS adapter |
 | Documents | AES-GCM in the browser; the platform stores bytes it cannot read |
@@ -43,8 +43,7 @@ sign in with a wallet → upload a receivable, encrypted in the browser
 | Web | React + TypeScript, exact decimals rendered without floats |
 
 Still behind in-process ports rather than live services: the confidential workflow (Chainlink
-CRE), the x402 paid endpoints, and the chain transfer executor — settlement moves assets on
-the local ledger even when minting is live on Hedera.
+CRE) and the x402 paid endpoints.
 
 ## Architecture
 
@@ -170,6 +169,25 @@ Copy `.env.example` to `.env`. Every provider variable is optional: an empty val
 the in-process implementation. A staging or production deployment refuses to start on the
 development database default, so a shared server cannot quietly run against localhost with
 the demo header enabled.
+
+## Settling on Hedera
+
+A receivable is minted as a token and, when a batch clears, actually moved. The transfer is
+submitted through a node and then confirmed a second time against a public mirror — two
+different sources, which is the only thing that makes a second confirmation worth having.
+The mirror check asks what the transaction moved, not merely whether it succeeded: a
+transaction that credited somebody else, or credited the right account with the wrong
+amount, fails the step rather than passing it.
+
+A wallet address is not somewhere a token can be sent. On Hedera the receiving side has to
+be an account that exists and accepts the token, so `factorflow chain-accounts` opens one
+per investor with unlimited automatic associations, and settlement delivers there. The
+platform holds those keys, which is custody and is named as such: a production system would
+have the investor bring their own account. Without Hedera credentials the same saga runs
+against the in-process ledger and says `local` where a network would be.
+
+Verifying a Hedera payment needs no third party and no key: the mirror is public, and
+`hedera.NewMirror` reads it over HTTPS.
 
 ## Hedera
 
@@ -326,10 +344,12 @@ the honest exception, since a judge who registers at midnight has nobody to admi
 
 ## Known gaps
 
-- The money leg is not on chain. Minting is live on Hedera testnet, but an investor pays
-  and is paid off chain: there is no escrow under a bid, no delivery-versus-payment, and no
-  burn at redemption. The blocker is not the adapter — it is that the seeded investors are
-  `0x` addresses with no Hedera account, so nothing can be transferred to them.
+- The asset moves on chain and the money does not. A cleared allocation transfers the token
+  to its buyer on testnet, but the buyer pays off chain: there is no escrow under a bid, no
+  delivery-versus-payment binding the two legs, and no burn at redemption.
+- The token is HTS rather than an Asset Tokenization Studio asset. Eligibility and transfer
+  restrictions are enforced by the venue — who may bid, what may clear — and not by an
+  on-chain compliance module, which is what the specification asks for.
 - Clearing 500 invoices against 2000 bids takes about 31 seconds against the
   specification's 2 second target. `BenchmarkClearTargetBatch` measures it; the cost is
   re-solving the flow once per repair round, and a warm-started or network-simplex solver

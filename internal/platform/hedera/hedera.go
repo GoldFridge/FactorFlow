@@ -265,3 +265,71 @@ func clamp(value string, limit int) string {
 	}
 	return value[:limit]
 }
+
+// Account is a Hedera account this platform created and holds the key for.
+type Account struct {
+	AccountID  string
+	EVMAddress string
+	// PrivateKey is the custodial key, hex-encoded. It is returned once, to be stored by the
+	// caller: this package keeps nothing.
+	PrivateKey  string
+	ExplorerURL string
+}
+
+/*
+CreateAccount opens an account the platform can transfer tokens to.
+
+It exists because of a fact about Hedera that a demo has to face rather than gloss over: a
+token cannot be sent to an address that has never been an account, and the receiving side
+must have associated the token or have an automatic association slot free. A participant who
+signed in with a browser wallet has an EVM address and, usually, no Hedera account behind it.
+
+The account is created with unlimited automatic associations, so the platform can deliver an
+asset without asking its buyer to sign an association first. That is custody, and it is
+the honest name for it: the key comes back to the caller, and whoever stores it can move the
+tokens. A production system would have the investor bring their own account and associate it
+themselves; this is a testnet demo that says what it is.
+*/
+func (c *Client) CreateAccount(ctx context.Context, initialBalance hiero.Hbar) (Account, error) {
+	if err := ctx.Err(); err != nil {
+		return Account{}, err
+	}
+
+	key, err := hiero.PrivateKeyGenerateEcdsa()
+	if err != nil {
+		return Account{}, fmt.Errorf("generating a key: %w", err)
+	}
+
+	response, err := hiero.NewAccountCreateTransaction().
+		SetECDSAKeyWithAlias(key).
+		SetInitialBalance(initialBalance).
+		// -1 is unlimited: the account accepts any token sent to it. A fixed number would
+		// silently stop accepting tokens at the eleventh one.
+		SetMaxAutomaticTokenAssociations(-1).
+		SetTransactionMemo("factorflow participant").
+		Execute(c.inner)
+	if err != nil {
+		return Account{}, fmt.Errorf("creating the account: %w", err)
+	}
+
+	receipt, err := response.GetReceiptQueryWithClient(c.inner).Execute(c.inner)
+	if err != nil {
+		return Account{}, fmt.Errorf("reading the receipt for %s: %w", response.TransactionID, err)
+	}
+	if receipt.AccountID == nil {
+		return Account{}, fmt.Errorf("the network accepted %s but returned no account",
+			response.TransactionID)
+	}
+
+	return Account{
+		AccountID:   receipt.AccountID.String(),
+		EVMAddress:  "0x" + key.PublicKey().ToEvmAddress(),
+		PrivateKey:  key.StringRaw(),
+		ExplorerURL: c.AccountURL(receipt.AccountID.String()),
+	}, nil
+}
+
+// AccountURL is where a person can see an account.
+func (c *Client) AccountURL(accountID string) string {
+	return fmt.Sprintf("https://hashscan.io/%s/account/%s", c.network, accountID)
+}

@@ -50,6 +50,11 @@ type Record struct {
 	// Status is the chain's status string, kept verbatim for an operator.
 	Status      string
 	ConfirmedAt time.Time
+	// Credited reports whether this transaction actually moved an amount of a token to an
+	// account. It is optional — a reader that cannot say leaves it nil — and where it is
+	// available it turns confirmation from "a transaction with this id succeeded" into
+	// "this transaction delivered what was planned, to whom it was planned for".
+	Credited func(tokenID, account string, amount int64) bool
 }
 
 // Executor performs transfers on whatever holds the asset.

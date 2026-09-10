@@ -16,6 +16,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	hiero "github.com/hiero-ledger/hiero-sdk-go/v2/sdk"
 
 	"github.com/GoldFridge/factorflow/internal/app/agents"
 	"github.com/GoldFridge/factorflow/internal/app/assessment"
@@ -71,6 +72,8 @@ func dispatch(args []string) error {
 			return seed()
 		case "operator":
 			return makeOperator(args[1:])
+		case "chain-accounts":
+			return openChainAccounts()
 		}
 	}
 	return run()
@@ -168,6 +171,98 @@ func makeOperator(args []string) error {
 			slog.String("name", org.Name))
 		return nil
 	})
+}
+
+/*
+openChainAccounts opens a network account for every investor that has none.
+
+A wallet address is where a signature comes from, not somewhere a token can be sent: on
+Hedera a transfer needs an account that exists and accepts the token. So the platform opens
+one per investor, holds the key, and delivers receivables there.
+
+That is custody, and it is the honest word for what a testnet demo does when its investors
+are seeded organizations with addresses nobody holds. It runs as a command rather than
+inside a request because each account costs a real transaction on a real network — the kind
+of thing that should happen when somebody asks for it, once, and be visible when it does.
+
+	factorflow chain-accounts
+*/
+func openChainAccounts() error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.LogLevel})))
+
+	chain := hederaClient(cfg)
+	if chain == nil {
+		return errors.New("no chain is configured: set FF_HEDERA_ACCOUNT_ID and FF_HEDERA_PRIVATE_KEY")
+	}
+	defer func() { _ = chain.Close() }()
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	db, err := postgres.Connect(ctx, postgres.DefaultConfig(cfg.DatabaseURL))
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	if err := postgres.Migrate(ctx, db); err != nil {
+		return err
+	}
+
+	repo := organization.NewPostgresRepository()
+	investors, err := repo.List(ctx, db.Querier(), organization.TypeInvestor, 200)
+	if err != nil {
+		return err
+	}
+
+	opened := 0
+	for _, investor := range investors {
+		if investor.ChainAccountID != "" {
+			continue
+		}
+
+		// The account is created before the transaction that records it, and outside it: a
+		// chain call inside a database transaction holds the transaction open across a
+		// network, and an account created inside one that then rolls back is an account
+		// nobody will ever find again.
+		account, err := chain.CreateAccount(ctx, hiero.NewHbar(1))
+		if err != nil {
+			return fmt.Errorf("opening an account for %s: %w", investor.Name, err)
+		}
+
+		expectedVersion := investor.Version
+		if err := investor.AttachChainAccount(account.AccountID, time.Now()); err != nil {
+			return err
+		}
+		if err := db.InTx(ctx, func(q postgres.Querier) error {
+			return repo.Update(ctx, q, investor, expectedVersion)
+		}); err != nil {
+			// The account exists on the network and this process is about to forget it. Say
+			// so loudly enough that an operator can put it back by hand rather than
+			// wondering later where the HBAR went.
+			return fmt.Errorf("account %s was created for %s and could not be recorded: %w",
+				account.AccountID, investor.Name, err)
+		}
+
+		opened++
+		slog.Info("account opened",
+			slog.String("organization", investor.Name),
+			slog.String("account", account.AccountID),
+			slog.String("evm_address", account.EVMAddress),
+			slog.String("explorer", account.ExplorerURL),
+			// The custodial key is logged once, here, because the alternative is a key that
+			// exists on a network and nowhere else. A production system would not have it at
+			// all: the investor would bring their own account.
+			slog.String("custodial_key", account.PrivateKey))
+	}
+
+	slog.Info("chain accounts ready",
+		slog.Int("opened", opened), slog.Int("investors", len(investors)))
+	return nil
 }
 
 // seed builds the demo dataset and exits.
@@ -357,7 +452,7 @@ func wire(cfg config.Config, db *postgres.DB, clk *clock.Clock, ids func() uuid.
 
 	// The settlement saga runs off the outbox like the other workers: a transfer that
 	// stopped half-way is retried by delivery rather than by anyone remembering to.
-	settlementWorker := marketplace.NewSettlementWorker(marketplaceService, transferExecutor(cfg, now), assets)
+	settlementWorker := marketplace.NewSettlementWorker(marketplaceService, transferExecutor(cfg, chain, now), assets)
 
 	dispatcher := outbox.NewDispatcher(db, outbox.DefaultDispatcherConfig(), now)
 	dispatcher.Register(invoice.TopicAssess, assessmentWorker.Handle)
@@ -519,7 +614,10 @@ func (o organizationWallets) WalletOf(ctx context.Context, q postgres.Querier, o
 	if err != nil {
 		return "", err
 	}
-	return org.Wallet, nil
+	// Where a participant receives tokens, which is the account the platform opened for them
+	// when there is one. The wallet address is the fallback, and it is what the in-process
+	// ledger uses: it can deliver to anything, because it delivers to nothing.
+	return org.Receives(), nil
 }
 
 // paidPrice is what one machine answer costs.
@@ -553,11 +651,54 @@ func paymentFacilitator(cfg config.Config, now func() time.Time) payments.Facili
 // transferExecutor picks the live chain when Hedera credentials are configured, and the
 // in-process ledger otherwise. The saga is the same either way: what changes is only who
 // answers Submit and Lookup.
-func transferExecutor(cfg config.Config, now func() time.Time) settlement.Executor {
-	if cfg.Providers.HederaIsLive() {
-		slog.Warn("hedera credentials are set but the transfer executor is not implemented; using the local ledger")
+func transferExecutor(cfg config.Config, chain *hedera.Client, now func() time.Time) settlement.Executor {
+	if chain == nil {
+		return settlement.NewLocalExecutor(now)
 	}
-	return settlement.NewLocalExecutor(now)
+
+	slog.Info("settling transfers on hedera",
+		slog.String("network", chain.Network()),
+		slog.String("mirror", hedera.MirrorURL(cfg.Providers.HederaNetwork)))
+
+	return settlement.NewChainExecutor(hederaChain{
+		client: chain,
+		mirror: hedera.NewMirror(cfg.Providers.HederaNetwork, ""),
+	})
+}
+
+// hederaChain adapts the platform client to what settlement asks of a network.
+//
+// The two halves come from two places on purpose: the transfer is submitted through a node,
+// and what became of it is read from a public mirror that has no idea who submitted it.
+type hederaChain struct {
+	client *hedera.Client
+	mirror *hedera.Mirror
+}
+
+func (h hederaChain) Network() string { return h.client.Network() }
+
+func (h hederaChain) Transfer(ctx context.Context, tokenID, to string, amount int64) (settlement.ChainReceipt, error) {
+	receipt, err := h.client.Transfer(ctx, tokenID, to, amount)
+	return settlement.ChainReceipt{
+		TransactionID: receipt.TransactionID,
+		Status:        receipt.Status,
+		ExplorerURL:   receipt.ExplorerURL,
+	}, err
+}
+
+func (h hederaChain) Lookup(ctx context.Context, transactionID string) (settlement.ChainRecord, error) {
+	record, err := h.mirror.Transaction(ctx, transactionID)
+	if err != nil {
+		return settlement.ChainRecord{}, err
+	}
+	return settlement.ChainRecord{
+		TransactionID: record.TransactionID,
+		Found:         record.Found,
+		Succeeded:     record.Succeeded(),
+		Status:        record.Status,
+		ConfirmedAt:   record.ConsensusAt,
+		Credited:      record.Moved,
+	}, nil
 }
 
 // assetIssuer mints on Hedera when credentials are configured, and in process otherwise.

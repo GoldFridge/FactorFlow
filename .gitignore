@@ -2,6 +2,8 @@
 /bin/
 /dist/
 *.exe
+# Go writes this when the target is locked by a running process, and it is a whole binary.
+*.exe~
 *.test
 *.out
 
