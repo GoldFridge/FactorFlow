@@ -18,9 +18,15 @@
 	}
 }
 
-# www is the address people type and link, so it has to work — but it redirects rather than
-# serving a second copy. A session cookie belongs to one host: served on both, somebody who
-# signed in at one name would find themselves signed out by following a link to the other.
-www.{$DOMAIN} {
+# The other name people type — usually the apex when {$DOMAIN} is www, or www when it is the
+# apex. It redirects rather than serving a second copy: a session cookie belongs to one host,
+# so somebody who signed in at one name would find themselves signed out by following a link
+# to the other.
+#
+# The default is deliberately an http:// address that resolves to nothing. Caddy asks for a
+# certificate for every https site it is given, and a name whose DNS does not point here
+# cannot pass the challenge — so an alias nobody has configured must not be one Caddy tries
+# to secure. Set DOMAIN_ALIAS once the second name's A record exists, and not before.
+{$DOMAIN_ALIAS:http://alias.invalid} {
 	redir https://{$DOMAIN}{uri} permanent
 }

@@ -116,13 +116,18 @@ func TestTLSIsTerminatedForTheCookie(t *testing.T) {
 		t.Error("the site is not bound to DOMAIN, so Caddy has no name to get a certificate for")
 	}
 
-	// www is the address people type. Serving it a second copy rather than redirecting would
-	// split the session cookie across two hosts, so following a link to the other name would
-	// silently sign somebody out.
-	if !strings.Contains(caddy, "www.{$DOMAIN}") {
-		t.Error("www is not answered at all, so half the links to this demo reach nothing")
-	}
+	// The second name people type is answered by a redirect rather than a second copy:
+	// a session cookie belongs to one host, so serving both would sign somebody out for
+	// following a link between them.
 	if !strings.Contains(caddy, "redir https://{$DOMAIN}{uri} permanent") {
-		t.Error("www serves its own copy instead of redirecting to the canonical name")
+		t.Error("the alias serves its own copy instead of redirecting to the canonical name")
+	}
+
+	// Caddy requests a certificate for every https site it is given, and a name whose DNS
+	// does not point at this server cannot pass the challenge. An unconfigured alias must
+	// therefore default to a plain-http address, or every deployment that has only one name
+	// spends its Let's Encrypt attempts failing on a second one nobody asked for.
+	if !strings.Contains(caddy, "{$DOMAIN_ALIAS:http://") {
+		t.Error("an unset alias would be a name Caddy tries, and fails, to get a certificate for")
 	}
 }
