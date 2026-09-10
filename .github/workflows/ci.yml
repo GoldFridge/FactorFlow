@@ -2,11 +2,15 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, master]
   pull_request:
 
 env:
-  GO_VERSION: "1.24"
+  # The module's own version. A CI that builds with an older toolchain than go.mod requires
+  # does not fail on the code — it fails on the first line of go.mod, which is a confusing
+  # way to learn nothing.
+  GO_VERSION: "1.26"
+  NODE_VERSION: "22"
 
 jobs:
   lint:
@@ -28,16 +32,59 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-      - name: Unit and property tests
-        run: go test -race -coverprofile=coverage.txt ./...
+
+      # The integration tests bring up PostgreSQL through testcontainers, and Docker is on
+      # the runner already. -p 1 matters more than it looks: packages that cannot get a
+      # container skip rather than fail, so a parallel run can be green having tested
+      # nothing against a database.
+      - name: Tests, including the ones that need a database
+        run: go test -race -p 1 -coverprofile=coverage.txt ./...
       - name: Coverage summary
         run: go tool cover -func=coverage.txt | tail -1
 
-  build:
+  web:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - name: Types
+        run: npx tsc --noEmit
+      - name: Tests
+        run: npx vitest run
+      - name: Build
+        run: npm run build
+
+  workflow:
+    name: confidential workflow
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cre-workflows/invoice-risk-go
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-      - run: go build ./...
+
+      # It is a separate module and it compiles for a different target, so the root build
+      # would never notice it breaking.
+      - name: Compile for the enclave
+        run: GOOS=wasip1 GOARCH=wasm go build ./...
+      - run: go test ./...
+
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The deployment is this image. Building it here is what stops a broken Dockerfile
+      # being discovered on the server, at the worst possible moment.
+      - name: Build the deployment image
+        run: docker build --build-arg VERSION=${{ github.sha }} -t factorflow:ci .
