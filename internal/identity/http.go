@@ -16,23 +16,48 @@ const SessionCookie = "factorflow_session"
 // Handler exposes the login flow.
 type Handler struct {
 	service *Service
+	// DemoAuth reports whether this deployment honours the development sign-in header, so
+	// the interface can offer that path only where it works.
+	DemoAuth bool
 	// Secure marks the session cookie as HTTPS-only. It is false in local development,
 	// where there is no TLS, and true everywhere else.
 	Secure bool
 }
 
 // NewHandler returns the handler.
-func NewHandler(service *Service, secure bool) *Handler {
-	return &Handler{service: service, Secure: secure}
+func NewHandler(service *Service, secure, demoAuth bool) *Handler {
+	return &Handler{service: service, Secure: secure, DemoAuth: demoAuth}
 }
 
 // Routes registers the endpoints. They are public: proving who you are cannot require
 // already being authenticated.
 func (h *Handler) Routes(r chi.Router) {
+	r.Get("/auth/config", h.config)
 	r.Post("/auth/challenge", h.challenge)
 	r.Post("/auth/verify", h.verify)
 	r.Post("/auth/logout", h.logout)
 	r.Get("/auth/me", h.me)
+}
+
+// configResponse tells a browser what this deployment allows before it tries.
+//
+// The interface offers a development shortcut — sign in as a seeded participant — that a
+// production server refuses. Whether it is available is a fact about the deployment, and a
+// screen that has to discover it by being refused is a screen that shows a judge an error
+// instead of a way in.
+type configResponse struct {
+	// DemoAuth reports whether the X-Demo-Organization header names a caller here.
+	DemoAuth bool `json:"demo_auth"`
+	// Secure reports whether this deployment expects HTTPS, which is what makes the
+	// session cookie usable.
+	Secure bool `json:"secure"`
+}
+
+func (h *Handler) config(w http.ResponseWriter, r *http.Request) {
+	httpserver.WriteJSON(w, r, http.StatusOK, configResponse{
+		DemoAuth: h.DemoAuth,
+		Secure:   h.Secure,
+	})
 }
 
 type challengeRequest struct {

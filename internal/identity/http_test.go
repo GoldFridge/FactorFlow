@@ -27,7 +27,7 @@ func newAPIFixture(t *testing.T) *apiFixture {
 	t.Helper()
 
 	f := &apiFixture{fixture: newFixture(t)}
-	handler := identity.NewHandler(f.service, false)
+	handler := identity.NewHandler(f.service, false, true)
 	resolver := identity.NewResolver(f.service, identity.SessionCookie)
 
 	f.router = httpserver.NewRouter(httpserver.Dependencies{
@@ -206,11 +206,32 @@ func TestChallengeDoesNotRevealRegistration(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, rec.Code)
 }
 
+/*
+ * TestConfigTellsTheBrowserWhatThisDeploymentAllows. The interface offers a development
+ * shortcut — sign in as a seeded participant — that a production server refuses. A screen
+ * that discovers this by being refused shows a judge an error instead of a way in.
+ */
+func TestConfigTellsTheBrowserWhatThisDeploymentAllows(t *testing.T) {
+	t.Parallel()
+
+	f := newAPIFixture(t)
+
+	rec := f.do(t, httptest.NewRequest(http.MethodGet, "/api/v1/auth/config", http.NoBody))
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	body := decode(t, rec)
+	assert.Equal(t, true, body["demo_auth"], "this fixture is a development deployment")
+	assert.Equal(t, false, body["secure"])
+
+	// It is public: a browser has to be able to ask before it has a session.
+	assert.NotContains(t, body, "wallet")
+}
+
 func TestSecureCookieOutsideDevelopment(t *testing.T) {
 	t.Parallel()
 
 	f := newFixture(t)
-	handler := identity.NewHandler(f.service, true)
+	handler := identity.NewHandler(f.service, true, false)
 
 	router := httpserver.NewRouter(httpserver.Dependencies{
 		Routes: func(r chi.Router) { handler.Routes(r) },

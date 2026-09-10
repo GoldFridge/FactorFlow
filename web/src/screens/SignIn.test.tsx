@@ -12,6 +12,9 @@ vi.mock("../api/client", async () => {
   return {
     ...actual,
     api: {
+      // The provider asks what this deployment allows before it offers anything; the
+      // seeded-participant shortcut exists only where the server honours it.
+      config: vi.fn().mockResolvedValue({ demo_auth: true, secure: false }),
       me: vi.fn(),
       organization: vi.fn(),
       challenge: vi.fn(),

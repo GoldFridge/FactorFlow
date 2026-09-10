@@ -102,6 +102,13 @@ export const sessionLost = "factorflow:session-lost";
 
 export const api = {
   /**
+   * What this deployment allows, asked before the browser tries anything. A production
+   * server refuses the development sign-in header, and a screen that discovers that by
+   * being refused shows a visitor an error instead of a way in.
+   */
+  config: () => request<{ demo_auth: boolean; secure: boolean }>(`${base}/auth/config`, ""),
+
+  /**
    * The login exchange. A wallet asks for a challenge, signs the text it is given, and
    * posts the signature back; the server answers with a session cookie. Nothing here ever
    * sees a private key, and the challenge is spent by the request that verifies it.

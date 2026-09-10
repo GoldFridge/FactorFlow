@@ -363,7 +363,7 @@ func wire(cfg config.Config, db *postgres.DB, clk *clock.Clock, ids func() uuid.
 
 	identityService := identity.NewService(db, identity.NewPostgresRepository(),
 		organizationAccounts{repo: organizations}, now)
-	identityHandler := identity.NewHandler(identityService, cfg.Env.IsProductionLike())
+	identityHandler := identity.NewHandler(identityService, cfg.Env.IsProductionLike(), cfg.DemoAuthEnabled())
 
 	onboardingService := onboarding.NewService(onboarding.Config{
 		DB:            db,

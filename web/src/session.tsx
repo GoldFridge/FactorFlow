@@ -73,6 +73,8 @@ const walletKey = "factorflow.wallet";
 
 interface Session {
   stage: Stage;
+  /** demoAuth reports whether this deployment honours the seeded-participant shortcut. */
+  demoAuth: boolean;
   actor: Actor;
   /** auth is the development header value, and empty for a real wallet session. */
   auth: string;
@@ -104,6 +106,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [auth, setAuth] = useState("");
   const [pendingWallet, setPendingWallet] = useState("");
   const [busy, setBusy] = useState(false);
+  const [demoAuth, setDemoAuth] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [wallets, setWallets] = useState<Wallet[]>([]);
   const [chosen, setChosen] = useState<Wallet | null>(null);
@@ -165,6 +168,32 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       live = false;
     };
   }, [load]);
+
+  /**
+   * What this deployment allows is asked once, before anything is offered.
+   *
+   * It defaults to false: a screen that offered a shortcut the server refuses would show a
+   * visitor an error where it meant to show a way in, and defaulting the other way makes
+   * that the behaviour whenever the question fails.
+   */
+  useEffect(() => {
+    let live = true;
+    void (async () => {
+      try {
+        const config = await api.config();
+        if (live) {
+          setDemoAuth(config.demo_auth);
+        }
+      } catch {
+        // Any failure to ask leaves the shortcut hidden, which is the safe direction: a
+        // shortcut the server refuses sends a visitor into an error, and a missing one only
+        // asks them to use a wallet.
+      }
+    })();
+    return () => {
+      live = false;
+    };
+  }, []);
 
   /**
    * A session can end while the app is open: the cookie's twelve hours run out, or somebody
@@ -321,6 +350,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const value = useMemo<Session>(
     () => ({
       stage,
+      demoAuth,
       actor,
       auth,
       pendingWallet,
@@ -345,6 +375,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }),
     [
       stage,
+      demoAuth,
       actor,
       auth,
       pendingWallet,

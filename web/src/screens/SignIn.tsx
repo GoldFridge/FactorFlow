@@ -96,8 +96,20 @@ function Refusal({ error }: { error: unknown }) {
  * here rather than left for someone to discover.
  */
 function NoWallet() {
-  const { useDemo, busy } = useSession();
+  const { useDemo, busy, demoAuth } = useSession();
   const [chosen, setChosen] = useState(participants[0]!.id);
+
+  // On a deployed server the shortcut is refused, and offering it would send a visitor into
+  // a 401 rather than into the venue. The deployment is asked rather than guessed.
+  if (!demoAuth) {
+    return (
+      <p className="faint small">
+        No wallet was found in this browser. FactorFlow signs you in by signing a message, so
+        a browser wallet — MetaMask, Rabby or another EIP-1193 extension — is how you get in
+        from here.
+      </p>
+    );
+  }
 
   return (
     <>
